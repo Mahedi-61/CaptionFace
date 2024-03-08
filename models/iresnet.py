@@ -200,6 +200,6 @@ def iresnet200(pretrained=False, progress=True, **kwargs):
 
 
 if __name__ == "__main__":
-    x = torch.randn((16, 3, 32, 32))
+    x = torch.randn((16, 3,128,128))
     net = iresnet18()
     y = net(x)

@@ -1,19 +1,19 @@
-dataset_name: face2text #celeba
+dataset_name: face2text #celeba_dialog
 checkpoints_path: ./checkpoints
 
-text_encoder_path: "./checkpoints/celeba/TGFR/BERT_arcface/linear/encoder_BERT_linear_18.pth"
-image_encoder_path: "./checkpoints/celeba/TGFR/BERT_arcface/linear/fusion_linear_arcface_18.pth"
-
+text_encoder_path: "./checkpoints/celeba/TGFR/BERT_arcface_ir_50/linear/encoder_BERT_linear_16.pth"
+image_encoder_path: "./checkpoints/celeba/TGFR/BERT_arcface_ir_50/linear/fusion_linear_arcface_16.pth"
+backend_path: "./weights/finetuned/arcface_face2text.pth"
 
 # machine setup 
-batch_size: 64
-
+batch_size: 128
 
 # model arch
 img_size: 112
-model_type: arcface #arcface, magface, arcface
 ch_size: 3
-
+model_type: arcface #adaface, magface, arcface
+architecture: ir_18
+printing_attr: False  
 
 # encoder settings
 en_type: BERT        
@@ -21,14 +21,16 @@ embedding_dim: 256
 bert_type: bert 
 
 # fusion arch
-fusion_type: fcfm #linear, CMF
-fusion_final_dim: 544 
+is_ident: True 
+fusion_type: linear #linear, CMF
+fusion_final_dim: 576 
 gl_img_dim: 256
+gl_text_dim: 256
 
 #save
 roc_file: LSTM_arc_fcfm_face2text 
 is_roc: False   
-is_ident: False      
+printing_attr: True      
 
 # flags
 do_test: True

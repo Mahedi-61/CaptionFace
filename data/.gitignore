@@ -1,8 +1,11 @@
 *
 */
 */celeba
+*/cub
 */face2text
-**/celeba_dialog
-**/celeba-TextHQ
-**/FFHQ-Text
+*/celeba_dialog
+*/celeba-TextHQ
+*/FFHQ
+*/FFHQ-Text
+*/LFW
 !.gitignore

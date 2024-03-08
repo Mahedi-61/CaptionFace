@@ -24,7 +24,7 @@ def test(test_dl, model, args):
     loop = tqdm(total = len(test_dl))
 
     for step, data in enumerate(test_dl, 0):
-        img1, img2, cap1, cap2, cap_len1, cap_len2, pair_label = data
+        img1, img2, caption1, caption2, mask1, mask2, attr_vec1, attr_vec2, pair_label = data 
         
         # upload to cuda
         img1 = img1.to(device).requires_grad_()
@@ -51,10 +51,11 @@ def test(test_dl, model, args):
 
     loop.close()
 
+    #a = ["pred: " + str(i) + " true: " + str(j) for i, j in zip(preds, labels)]
     if not args.is_ident: 
         calculate_scores(preds, labels, args)
     else:
-        calculate_identification_acc(preds, args)
+        #calculate_identification_acc(preds, args)
         calculate_scores(preds, labels, args)
 
 
@@ -75,10 +76,10 @@ def main(args):
     test_dl = prepare_test_loader(args)
 
     if args.model_type == "adaface":
-        model = prepare_adaface(args)
+        model = prepare_adaface(args, train_mode="my_own")
         
     elif args.model_type == "arcface":
-        model = prepare_arcface(args)
+        model = prepare_arcface(args, train_mode="my_own")
 
     elif args.model_type == "magface":
         model = prepare_magface(args) 
@@ -86,7 +87,6 @@ def main(args):
     print("start testing ...")
     test(test_dl, model, args)
  
-
 
 if __name__ == "__main__":
     file_args = merge_args_yaml(parse_args())
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     elif args.dataset_name == "celeba":
         args =  SimpleNamespace(**celeba_cfg.__dict__, **args.__dict__)
     
-    elif args.dataset_name == "celeba_dialog_cfg":
+    elif args.dataset_name == "celeba_dialog":
         args  = SimpleNamespace(**celeba_dialog_cfg.__dict__, **args.__dict__)
     else:
         print("Error: New Dataset !!, dataset doesn't have config file!!")

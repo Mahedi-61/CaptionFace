@@ -6,10 +6,12 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm 
 import os 
-
+import matplotlib.pyplot as plt 
 ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
-from utils.dataset_utils import encode_Bert_tokens
+from utils.dataset_utils import encode_Bert_tokens, all_attributes
+from utils.attribute import caps_all_attributes
+
 
 
 ############   modules   ############
@@ -57,7 +59,7 @@ def calculate_scores(y_score, y_true, args):
     eer = fprs[np.nanargmin(np.absolute((1 - tprs) - fprs))]
     auc = metrics.auc(fprs, tprs)
     tpr_fpr_row = get_tpr(fprs, tprs)
-    total_score = tpr_fpr_row[1] + tpr_fpr_row[2] + tpr_fpr_row[3]
+    total_score = tpr_fpr_row[0] + tpr_fpr_row[1] + tpr_fpr_row[2] 
 
     print("AUC {:.4f} | EER {:.4f} | TPR@FPR=1e-6 {:.4f} | TPR@FPR=1e-5 {:.4f} | TPR@FPR=1e-4 {:.4f} | TPR@FPR=1e-3 {:.4f} | score {:.4f}".
         format(auc, eer, tpr_fpr_row[0], tpr_fpr_row[1], tpr_fpr_row[2], tpr_fpr_row[3], total_score))
@@ -85,62 +87,93 @@ def calculate_identification_acc(y_score, args):
     print("identification accuracy (%)", (acc/total_sub) * 100)
 
 
+def attribute_analysis(img, img_attr, attr_vec, text_attr):
+    plt.imshow(img.detach().cpu().permute(1, 2, 0))
+    pred_attributes = img_attr.detach().cpu().tolist()
+    #print("predicted attributes: ", pred_attributes)
 
-def test(test_dl, model, head, net, text_encoder, text_head, args):
+    print("for predicted image attributes")
+    pred_attributes = [i if i > 0.35 else 0.0 for i in pred_attributes]
+    for_print = [all_attributes[i] + " : " + str(prob) for i, prob in enumerate(pred_attributes) if prob != 0.0]
+    print(for_print)
+
+    print("for predicted text attributes")
+    pred_text_attributes = text_attr.detach().cpu().tolist()
+    pred_text_attributes = [i if i > 0.35 else 0.0 for i in pred_text_attributes]
+    for_text_print = [caps_all_attributes[i] + " : " + str(prob) for i, prob in enumerate(pred_text_attributes) if prob != 0.0]
+    print(for_text_print)
+    plt.show()
+    print("\n\n\n")
+
+
+def test(test_dl, model, head, image_text_attr, fusion_net, text_encoder, text_head, args):
     device = args.device
-    net.eval()
+    fusion_net.eval()
     model.eval() 
     head.eval()
     text_encoder.eval()
     text_head.eval()
+    image_text_attr.eval()
     preds = []
     labels = []
 
     loop = tqdm(total=len(test_dl))
     with torch.no_grad():
         for step, data in enumerate(test_dl, 0):
-            img1, img2, caption1, caption2, mask1, mask2, pair_label = data
+            img1, img2, caption1, caption2, mask1, mask2, attr_vec1, attr_vec2, pair_label = data
 
-            # upload to cuda
-            img1 = img1.to(device) #.requires_grad_()
-            img2 = img2.to(device) #.requires_grad_()
+            img1 = img1.to(device) 
+            img2 = img2.to(device) 
+            attr_vec1 = attr_vec1.to(device)
+            attr_vec2 = attr_vec2.to(device)
             pair_label = pair_label.to(device)
 
             # get global and local image features from face encoder
             if args.model_type == "arcface":
-                global_feat1,  local_feat1 = model(img1)
-                global_feat2,  local_feat2 = model(img2)
+                gl_feat1,  local_feat1 = model(img1)
+                gl_feat2,  local_feat2 = model(img2)
 
             elif args.model_type == "adaface":
                 global_feat1,  local_feat1, norm = model(img1)
                 global_feat2,  local_feat2, norm = model(img2)
 
-            global_feat1,  local_feat1 = head(global_feat1,  local_feat1)
-            global_feat2,  local_feat2 = head(global_feat2,  local_feat2)
+            global_feat1,  local_feat1 = head(gl_feat1,  local_feat1)
+            global_feat2,  local_feat2 = head(gl_feat2,  local_feat2)
 
 
             # get word and caption features from text encoder
-            words_emb1, sent_emb1 = encode_Bert_tokens(text_encoder, text_head, caption1, mask1)
-            words_emb2, sent_emb2 = encode_Bert_tokens(text_encoder, text_head, caption2, mask2)
+            words_emb1, sent_emb1 = encode_Bert_tokens(text_encoder, text_head, caption1, mask1, args)
+            words_emb2, sent_emb2 = encode_Bert_tokens(text_encoder, text_head, caption2, mask2, args) 
 
             sent_emb1 = sent_emb1.to(device)
             sent_emb2 = sent_emb2.to(device)
 
-            words_emb1 = words_emb1.to(device) #.requires_grad_()
-            words_emb2 = words_emb2.to(device) #.requires_grad_()
+            words_emb1 = words_emb1.to(device) 
+            words_emb2 = words_emb2.to(device) 
 
+            """
+            if args.printing_attr == True:
+                img_attr1 = torch.sigmoid(image_text_attr(global_feat1))
+                img_attr2 = torch.sigmoid(image_text_attr(global_feat2)) 
+
+                #text_attr1 = torch.sigmoid(image_text_attr(sent_emb1))
+                #text_attr2 = torch.sigmoid(image_text_attr(sent_emb2))
+
+                #attribute_analysis(img1[0], img_attr1[0], attr_vec1[0], text_attr1[0])
+                #attribute_analysis(img2[0], img_attr2[0], attr_vec2[0], text_attr2[0])
+            """
             # sentence & word featurs 
             if args.fusion_type == "fcfm":
-                out1 = net(local_feat1, words_emb1,  global_feat1, sent_emb1)
-                out2 = net(local_feat2, words_emb2,  global_feat2, sent_emb2)
+                out1 = fusion_net(local_feat1, words_emb1,  global_feat1, sent_emb1)
+                out2 = fusion_net(local_feat2, words_emb2,  global_feat2, sent_emb2)
 
             elif args.fusion_type == "linear":
-                out1 =  net(local_feat1, global_feat1, sent_emb1)
-                out2 =  net(local_feat2, global_feat2, sent_emb2)
+                out1 =  fusion_net(local_feat1, global_feat1, sent_emb1)
+                out2 =  fusion_net(local_feat2, global_feat2, sent_emb2)
 
             elif args.fusion_type == "CMF":
-                out1 = net(local_feat1, words_emb1,  global_feat1, sent_emb1)
-                out2 = net(local_feat2, words_emb2,  global_feat2, sent_emb2)
+                out1 = fusion_net(local_feat1, words_emb1,  global_feat1, sent_emb1)
+                out2 = fusion_net(local_feat2, words_emb2,  global_feat2, sent_emb2)
 
             del local_feat1, local_feat2, words_emb1, words_emb2
 
@@ -154,7 +187,8 @@ def test(test_dl, model, head, net, text_encoder, text_head, args):
             loop.set_postfix()
 
     loop.close()
-    calculate_scores(preds, labels, args)
 
-    if args.is_ident: 
+    calculate_scores(preds, labels, args)
+    if args.is_ident == True:
         calculate_identification_acc(preds, args)
+

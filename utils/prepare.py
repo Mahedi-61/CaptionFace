@@ -6,6 +6,7 @@ from utils.utils import load_model_weights, load_fusion_net
 from models.models import TextHeading, TextEncoder, ImageHeading
 from models.fusion_nets import (LinearFusion, FCFM, CMF)
 from models import iresnet, net 
+from models import metrics
 from models.network import NetworkBuilder
 from utils.dataset_utils import *
 
@@ -13,12 +14,12 @@ from utils.dataset_utils import *
 ###########   model   ############
 def prepare_text_encoder(args):    
     text_encoder =  TextEncoder(args)
-    text_encoder = torch.nn.DataParallel(text_encoder, device_ids=args.gpu_id).cuda()
+    text_encoder = torch.nn.DataParallel(text_encoder, device_ids=args.gpu_id).to(args.device)
     state_dict = torch.load(args.text_encoder_path)
     text_encoder.load_state_dict(state_dict['model'])
 
     text_head = TextHeading(args)
-    text_head = torch.nn.DataParallel(text_head, device_ids=args.gpu_id).cuda()
+    text_head = torch.nn.DataParallel(text_head, device_ids=args.gpu_id).to(args.device)
     text_head.load_state_dict(state_dict['head'])
     del state_dict
 
@@ -30,45 +31,96 @@ def prepare_image_head(args):
     print("loading image encoder: ", args.image_encoder_path)
     head = ImageHeading(args)
 
-    head = torch.nn.DataParallel(head, device_ids=args.gpu_id).cuda()
+    head = torch.nn.DataParallel(head, device_ids=args.gpu_id).to(args.device)
     state_dict = torch.load(args.image_encoder_path)
     head.load_state_dict(state_dict['image_head'])
     return head 
 
 
-### model for ArcFace
-def prepare_arcface(args):
-    device = args.device
-    model = iresnet.iresnet18(pretrained=False, progress=True)
+def prepare_image_text_attr(args):
+    print("loading image_text_attr: ", args.image_encoder_path)
+    image_text_attr = metrics.Classifier(args.gl_text_dim, 40)
 
-    checkpoint = torch.load(args.weights_arcface)
+    image_text_attr = torch.nn.DataParallel(image_text_attr, device_ids=args.gpu_id).to(args.device)
+    state_dict = torch.load(args.image_encoder_path)
+    image_text_attr.load_state_dict(state_dict['attr_head'])
+    return image_text_attr 
+
+
+    """
+    unfreeze_layers = ['bn2', 'fc','features'] #'layer3.1', 'layer.4', 
+    for name, param in model.named_parameters():
+        param.requires_grad = False
+        for ele in unfreeze_layers:
+            if ele in name:
+                param.requires_grad = True
+    """
+
+### model for ArcFace
+def prepare_arcface(args, train_mode):
+    device = args.device
+    if args.architecture == "ir_18":
+        model = iresnet.iresnet18(pretrained=False, progress=True)
+        weights_path = args.weights_arcface_18
+
+    elif args.architecture == "ir_50":
+        model = iresnet.iresnet50(pretrained=False, progress=True)
+        weights_path = args.weights_arcface_50
+    
+    checkpoint = torch.load(weights_path)
     model.load_state_dict(checkpoint)
 
-    model = torch.nn.DataParallel(model, device_ids=args.gpu_id).to(device)
-    for p in model.parameters():
-        p.requires_grad = False
-    model.eval()
-    print("loading pretrained arcface model")
+    model.to(device)
+    model = torch.nn.DataParallel(model, device_ids=args.gpu_id)
+    print("loading pretrained arcface model: ", args.architecture)
+
+
+    if train_mode == "my_own":
+        state_dict = torch.load(args.backend_path)
+        model.load_state_dict(state_dict['image_encoder'])
+        print("my own arcface weight is loaded")
+
+    if train_mode == "fixed" or train_mode == "my_own":
+        for p in model.parameters():
+            p.requires_grad = False
+        model.eval()
+        print("******* ArcFace weights are fixed **********")
+
     return model 
 
 
-#### model for AdaFace 
-def prepare_adaface(args):
-    device = args.device
-    architecture = "ir_18"
 
-    model = net.build_model(architecture)    
-    statedict = torch.load(args.weights_adaface)['state_dict']
+#### model for AdaFace 
+def prepare_adaface(args, train_mode):
+    device = args.device
+
+    if args.architecture == "ir_18":
+        weights_path = args.weights_adaface_18
+    elif args.architecture == "ir_50":
+        weights_path = args.weights_adaface_50
+
+    model = net.build_model(args.architecture) 
+    statedict = torch.load(weights_path)['state_dict']
     model_statedict = {key[6:]:val for key, val in statedict.items() if key.startswith('model.')}
     model.load_state_dict(model_statedict)
     
     model.to(device)
     model = torch.nn.DataParallel(model, device_ids=args.gpu_id)
-    for p in model.parameters():
-        p.requires_grad = False
-    model.eval()
-    print("loading pretrained adaface model")
+    print("loading pretrained adaface model:  ", args.architecture)
+
+    if train_mode == "my_own":
+        state_dict = torch.load(args.backend_path)
+        model.load_state_dict(state_dict['image_encoder'])
+        print("my own adaface weight is loaded")
+
+    if train_mode == "fixed" or train_mode == "my_own":
+        for p in model.parameters():
+            p.requires_grad = False
+        model.eval()
+        print("******* AdaFace weights are fixed **********")
+
     return model 
+
 
 
 #### model for MagFace 
@@ -119,7 +171,6 @@ def prepare_train_val_loader(args):
                             train_attr_label, 
                             split="train", 
                             args=args)
-
 
     valid_ds = TestDataset(valid_filenames, 
                             valid_captions, 

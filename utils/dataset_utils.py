@@ -13,21 +13,14 @@ from albumentations.pytorch import ToTensorV2
 import albumentations as A 
 from utils import attribute as a 
 
-def sort_sents(captions, caption_lens):
-    # sort data by the length in a decreasing order
-    sorted_cap_lens, sorted_cap_indices = torch.sort(caption_lens, 0, True)
-    captions = captions[sorted_cap_indices].squeeze()
-    captions = Variable(captions).cuda()
-    sorted_cap_lens = Variable(sorted_cap_lens).cuda()
-    return captions, sorted_cap_lens, sorted_cap_indices
 
+def encode_Bert_tokens(text_encoder, text_head, caption, mask, args):
+    caption = Variable(caption).to(args.device)
+    mask = Variable(mask).to(args.device)
 
-def encode_Bert_tokens(text_encoder, text_head, caption, mask):
-    caption = Variable(caption).cuda()
-    mask = Variable(mask).cuda()
     with torch.no_grad():
-         words_emb, sent_emb_org = text_encoder(caption, mask)
-         words_emb, sent_emb = text_head(words_emb, sent_emb_org)
+        words_emb, sent_emb_org = text_encoder(caption, mask)
+        words_emb, sent_emb = text_head(words_emb, sent_emb_org)
 
     return words_emb.detach(), sent_emb.detach()
 
@@ -39,14 +32,13 @@ def rm_sort(caption, sorted_cap_idxs):
     return non_sort_cap
 
 
-
 def get_imgs(img_path, split, model_type="arcface"):
 
     img = np.array(Image.open(img_path).convert('RGB')) 
     sample_transforms = [
         A.HorizontalFlip(),
-        A.RandomBrightnessContrast(),
         A.ColorJitter(),
+        A.RandomBrightnessContrast(),
         A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.3, rotate_limit=30, p=0.5),
         A.HueSaturationValue(p=0.3)
     ]
@@ -73,7 +65,6 @@ def get_imgs(img_path, split, model_type="arcface"):
         img = img[permute, :, :] #RGB --> BGR
 
     return img
-
 
 
 def load_captions_Bert(data_dir, filenames, args):
@@ -216,54 +207,6 @@ def load_text_data_Bert(data_dir, args):
             test_names, test_captions, test_att_masks, test_attr_label) 
 
 
-def build_dictionary(train_captions, valid_captions, test_captions):
-    word_counts = defaultdict(float)
-    captions = train_captions + valid_captions + test_captions 
-    for sent in captions:
-        for word in sent:
-            word_counts[word] += 1
-
-    vocab = [w for w in word_counts if word_counts[w] >= 0]
-    ixtoword = {}
-    ixtoword[0] = '<end>'
-    wordtoix = {}
-    wordtoix['<end>'] = 0
-    ix = 1
-    for w in vocab:
-        wordtoix[w] = ix
-        ixtoword[ix] = w
-        ix += 1
-
-    train_captions_new = []
-    for t in train_captions:
-        rev = []
-        for w in t:
-            if w in wordtoix:
-                rev.append(wordtoix[w])
-        # rev.append(0)  # do not need '<end>' token
-        train_captions_new.append(rev)
-
-    valid_captions_new = []
-    for t in valid_captions:
-        rev = []
-        for w in t:
-            if w in wordtoix:
-                rev.append(wordtoix[w])
-        # rev.append(0)  # do not need '<end>' token
-        valid_captions_new.append(rev)
-
-    test_captions_new = []
-    for t in test_captions:
-        rev = []
-        for w in t:
-            if w in wordtoix:
-                rev.append(wordtoix[w])
-        # rev.append(0)  # do not need '<end>' token
-        test_captions_new.append(rev)
-
-    return [train_captions_new, valid_captions_new, test_captions_new, ixtoword, wordtoix, len(ixtoword)]
-
-
 def load_filenames(data_dir, split):
     filepath = os.path.join(data_dir, split, "filenames.pickle")
 
@@ -288,3 +231,13 @@ def load_class_id(data_dir):
 
     print('Load class_info from: %s (%d)' % (filepath, len(class_id)))
     return class_id
+
+
+all_attributes = ["5_o_Clock_Shadow",	"Arched_Eyebrows",	"Attractive",	"Bags_Under_Eyes",	"Bald",	
+                "Bangs",	"Big_Lips",	"Big_Nose",	"Black_Hair", "Blond_Hair",	
+                "Blurry",	"Brown_Hair",	"Bushy_Eyebrows",	"Chubby",	"Double_Chin",
+                "Eyeglasses",	"Goatee",	"Gray_Hair",	"Heavy_Makeup",	"High_Cheekbones",
+                "Male",	"Mouth_Slightly_Open",	"Mustache", "Narrow_Eyes", "No_Beard",
+                "Oval_Face", "Pale_Skin", "Pointy_Nose", "Receding_Hairline", "Rosy_Cheeks",	
+                "Sideburns", "Smiling",	"Straight_Hair", 	"Wavy_Hair",	"Wearing_Earrings",
+                "Wearing_Hat",	"Wearing_Lipstick", "Wearing_Necklace", "Wearing_Necktie", "Young"]

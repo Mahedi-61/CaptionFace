@@ -96,6 +96,7 @@ def load_fusion_net(net, path):
     net = load_model_weights(net, checkpoint["net"])
     return net
 
+
 def get_dataframes(dataset, train = True):
     base_path = os.path.join("./data", dataset, "annotations")
 

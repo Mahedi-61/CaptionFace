@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+from torchsummary import summary
 
 __all__ = ['iresnet18', 'iresnet34', 'iresnet50', 'iresnet100', 'iresnet200']
 using_ckpt = False
@@ -151,10 +152,12 @@ class IResNet(nn.Module):
             x = self.conv1(x)
             x = self.bn1(x)
             x = self.prelu(x)
+            print(x.shape)
             x = self.layer1(x)
             x = self.layer2(x)
             x = self.layer3(x)
             x = self.layer4(x)
+            
             x = self.bn2(x)
             x = torch.flatten(x, 1)
             x = self.dropout(x)
@@ -202,6 +205,7 @@ def iresnet200(pretrained=False, progress=True, **kwargs):
 
 if __name__ == "__main__":
     x = torch.randn((16, 3, 112, 112))
-    net = iresnet18()
+    net = iresnet18() 
     y, gl_feat = net(x)
-    print(gl_feat.size()) 
+    #summary(net, (3, 112, 112))
+    #print(gl_feat.size()) 

@@ -11,7 +11,7 @@ from cfg.config_space import face2text_cfg, celeba_cfg, celeba_dialog_cfg, setup
 from types import SimpleNamespace
 from utils.utils import merge_args_yaml
 from utils.prepare import (prepare_test_loader, 
-                           prepare_arcface, prepare_adaface, prepare_image_head,
+                           prepare_arcface, prepare_adaface, prepare_image_head, prepare_image_text_attr,
                            prepare_text_encoder, 
                            prepare_fusion_net)
 from utils.modules import test
@@ -38,21 +38,23 @@ class Test:
         self.text_encoder, self.text_head = prepare_text_encoder(self.args)
         
         if self.args.model_type == "arcface":
-            self.image_encoder = prepare_arcface(self.args) 
+            self.image_encoder = prepare_arcface(self.args, train_mode="fixed") 
             
         elif self.args.model_type == "adaface":
-            self.image_encoder = prepare_adaface(self.args)
+            self.image_encoder = prepare_adaface(self.args, train_mode="fixed")
+
+        if self.args.printing_attr == True: 
+            self.image_text_attr = prepare_image_text_attr(self.args)
 
         self.image_head = prepare_image_head(self.args)
         self.fusion_net = prepare_fusion_net(self.args) 
 
     
-
     def main(self):
         #pprint.pprint(self.args)
         print("\nLet's test the model")
         test(self.test_dl, 
-            self.image_encoder, self.image_head,  
+            self.image_encoder, self.image_head, self.image_text_attr,
             self.fusion_net, 
             self.text_encoder, self.text_head, 
             self.args)
@@ -68,7 +70,7 @@ if __name__ == "__main__":
     elif args.dataset_name == "celeba":
         args =  SimpleNamespace(**celeba_cfg.__dict__, **args.__dict__)
     
-    elif args.dataset_name == "celeba_dialog_cfg":
+    elif args.dataset_name == "celeba_dialog":
         args  = SimpleNamespace(**celeba_dialog_cfg.__dict__, **args.__dict__)
     else:
         print("Error: New Dataset !!, dataset doesn't have config file!!")
@@ -80,6 +82,5 @@ if __name__ == "__main__":
     torch.manual_seed(args.manual_seed)
 
     torch.cuda.manual_seed_all(args.manual_seed)
-    args.device = torch.device("cuda")
 
     Test(args).main()

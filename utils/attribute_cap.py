@@ -33,16 +33,6 @@ def get_substring(caption, search_word):
         return " ".join(cap_words[start_index : end_index+1])
 
 
-caps_all_attributes = ["wearing earrings", "wearing hat", "wearing lipstick", "wearing necklace", "wearing necktie", 
-                       "heavy makeup", "receding hairline", "bald", "bangs", "straight hair", 
-                       "wavy hair",  "gray hair", "blond hair", "black hair", "brown hair",
-                       "bags under eyes", "arched eyebrows", "eyeglasses", "narrow eyes", "bushy eyebrows",
-                       "goatee", "mustache",  "no beard", "male", "sideburns",  
-                       "5 o'clock shadow", "attractive", "young", "smiling", "blurry", 
-                       "chubby", "double chin",  "high cheekbones", "rosy cheeks", "mouth slightly open",  
-                       "oval face", "pale skin", "pointy nose", "big lips", "big nose"]
-
-
 def get_attr_vector(caption):
     if not isinstance(caption, str):
         return [0.0] * 40
@@ -88,34 +78,34 @@ def get_attr_vector(caption):
                 ls_hair[0] = 1.0
 
         if "wavy" in caption or "curly" in caption:
-                ls_hair[3] = 0.0
+                ls_hair[3] = -1.0
                 ls_hair[4] = 1.0
 
         elif "straight" in caption:
                 ls_hair[3] = 1.0
-                ls_hair[4] = 0.0
+                ls_hair[4] = -1.0
 
         if "blond" in caption:
-                ls_hair[5] = 0.0
+                ls_hair[5] = -1.0
                 ls_hair[6] = 1.0
-                ls_hair[7] = 0.0
-                ls_hair[8] = 0.0
+                ls_hair[7] = -1.0
+                ls_hair[8] = -1.0
 
         if isWord("hair")(caption):
             substring = get_substring(caption, "hair")
             if "gray" in substring:
                 ls_hair[5] = 1.0
-                ls_hair[7] = 0.0
-                ls_hair[8] = 0.0
+                ls_hair[7] = -1.0
+                ls_hair[8] = -1.0
                 
             elif "black" in substring:
-                ls_hair[5] = 0.0
+                ls_hair[5] = -1.0
                 ls_hair[7] = 1.0
-                ls_hair[8] = 0.0
+                ls_hair[8] = -1.0
 
             elif "brown" in substring:
-                ls_hair[5] = 0.0
-                ls_hair[7] = 0.0
+                ls_hair[5] = -1.0
+                ls_hair[7] = -1.0
                 ls_hair[8] = 1.0
         #print(ls_hair)
 
@@ -135,7 +125,7 @@ def get_attr_vector(caption):
 
         if isWord("eyebrows")(caption):
             substring = get_substring(caption, "eyebrows")
-            if "thin" in substring: ls_eye[4] = 0.0
+            if "thin" in substring: ls_eye[4] = -1.0
             if "thick" in substring or "bushy" in substring : ls_eye[4] = 1.0
         #print(ls_eye)
 
@@ -159,30 +149,30 @@ def get_attr_vector(caption):
                 ls_man[5] = 1.0
 
         if "cleanshaven" in caption:
-            ls_man[0] = 0.0
+            ls_man[0] = -1.0
             ls_man[2] = 1.0
             ls_man[3] = 1.0
-            ls_man[4] = 0.0
-            ls_man[5] = 0.0
+            ls_man[4] = -1.0
+            ls_man[5] = -1.0
 
         if ls_man[2] != 1.0 and isWord("beard")(caption):
-            ls_man[2] = 0.0 
+            ls_man[2] = -1.0 
             
         for sub in ["man", "he"]:
             if sub in caption: ls_man[3] = 1.0
 
         for sub in ["woman", "she", "lady"]:
-            if sub in caption: ls_man[3] = 0.0
+            if sub in caption: ls_man[3] = -1.0
 
-        if ls_man[0] == 1.0 or ls_man[1] == 1.0 or ls_man[2] == 0.0:
+        if ls_man[0] == 1.0 or ls_man[1] == 1.0 or ls_man[2] == -1.0:
             ls_man[3] = 1.0
 
-        if ls_man[3] == 0.0: #for female
-            ls_man[0] = 0.0
-            ls_man[1] = 0.0
+        if ls_man[3] == -1.0: #for female
+            ls_man[0] = -1.0
+            ls_man[1] = -1.0
             ls_man[2] = 1.0
-            ls_man[4] = 0.0
-            ls_man[5] = 0.0
+            ls_man[4] = -1.0
+            ls_man[5] = -1.0
         #print(ls_man)
 
 
@@ -204,7 +194,7 @@ def get_attr_vector(caption):
                 ls_female[5] = 1.0
 
         for sub in ["old", "aged"]:
-            if sub in caption: ls_female[1] = 0.0
+            if sub in caption: ls_female[1] = -1.0
 
         #print(ls_female)
 
@@ -227,7 +217,7 @@ def get_attr_vector(caption):
 
         if ls_face[2] == 0.0 and "complexion" in caption:
             if "fair" in caption:
-                ls_face[2] = 0.0
+                ls_face[2] = -1.0
             elif "tan" in caption:
                 ls_face[2] = 1.0
 
@@ -241,14 +231,14 @@ def get_attr_vector(caption):
             if "big" in substring or "thick" in substring or "full" in substring:
                 ls_face[4] = 1.0
             elif "small" in substring or "thin" in substring:
-                ls_face[4] = 0.0
+                ls_face[4] = -1.0
 
         if ls_face[5] == 0.0 and isWord("nose")(caption):
             substring = get_substring(caption, "nose")
             if "big" in substring or "wide" in substring or "long" in substring:
                 ls_face[5] = 1.0
             elif "small" in substring or "narrow" in substring or "short" in substring:
-                ls_face[5] = 0.0
+                ls_face[5] = -1.0
 
         #print(ls_face)
         return ls_wearing + ls_hair + ls_eye + ls_man + ls_female + ls_face 
@@ -276,3 +266,10 @@ if __name__ == "__main__":
                
 
         #print(all_list)
+
+    a = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 
+         1.0, 0.0, 0.0, 0.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
+         1.0, 0.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0]
+
+    if a in all_list:
+         print(all_list.index(a))

@@ -53,23 +53,32 @@ class TrainDataset(data.Dataset):
         return x, x_len
 
 
+    def get_attr_vector(self, attr_file):
+        with open(attr_file, "r") as f:
+            line = f.read()
+
+        return torch.Tensor([0.0 if int(l) == -1 else 1.0 for l in line.split(",")])
+
+
+
     def __getitem__(self, index):
         key = self.filenames[index]
         cls_id = self.class_id[index]
         cap_attr = torch.Tensor(self.attr_label[index]) 
-        data_dir = os.path.join(self.data_dir, "images")
-
+        
+        attr_file = os.path.join(self.data_dir, "attributes", self.split, key + ".txt")
         img_extension = ".jpg" # works for all dataset 
-
-        img_name = os.path.join(data_dir, self.split, key + img_extension)
+        img_name = os.path.join(self.data_dir, "images", self.split, key + img_extension)
+        
         imgs = get_imgs(img_name, self.split, self.model_type)
+        attr_vec = self.get_attr_vector(attr_file)
 
         # random select a sentence
         sent_ix = random.randint(0, self.captions_per_image)
         new_sent_ix = index * self.captions_per_image + sent_ix
 
         caps, mask = self.captions[new_sent_ix], self.att_masks[new_sent_ix]
-        return imgs, caps, mask, key, cap_attr, cls_id 
+        return imgs, caps, mask, key, cap_attr, attr_vec, cls_id 
 
 
     def __len__(self):

@@ -1,9 +1,10 @@
 from types import SimpleNamespace
+import torch 
 
 # Face2Text dataset
 face2text_cfg = SimpleNamespace(
     data_dir = "./data/face2text",  
-    test_pair_list = "./data/face2text/images/test_299_sub.txt", 
+    test_pair_list = "./data/face2text/images/test_199_sub.txt", 
     valid_pair_list = "./data/face2text/images/valid_199_sub.txt",
     num_classes = 4500,
     bert_words_num = 40, 
@@ -34,10 +35,14 @@ celeba_dialog_cfg = SimpleNamespace(
 )
 
 setup_cfg = SimpleNamespace(
-    weights_adaface= "./weights/pretrained/adaface_ir18_webface4m.ckpt",
-    weights_arcface= "./weights/pretrained/arcface_ir18_ms1mv3.pth", #celeba_caption.pt",
-    weights_magface= "./weights/pretrained/magface_iresnet18_casia_dp.pth",
+    weights_adaface_18 = "./weights/pretrained/adaface_ir18_webface4m.ckpt",
+    weights_adaface_50 = "./weights/pretrained/adaface_ir50_ms1mv2.ckpt",
 
+    weights_arcface_18= "./weights/pretrained/arcface_ir18_ms1mv3.pth", 
+    weights_arcface_50= "./weights/pretrained/arcface_ir50_ms1mv3.pth", 
+
+
+    weights_magface= "./weights/pretrained/magface_iresnet18_casia_dp.pth",
     metric= "arc_margin", 
     easy_margin= False,
     loss= "focal_loss", 
@@ -51,8 +56,8 @@ setup_cfg = SimpleNamespace(
     groupvit_config= "nvidia/groupvit-gcc-yfcc",
 
     # machine setup
-    num_workers= 8, 
+    num_workers= 4, 
     gpu_id= [0], #1
-    manual_seed= 100,
-    CUDA= True
+    device = torch.device("cuda:0"),
+    manual_seed= 100
 )

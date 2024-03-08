@@ -5,12 +5,11 @@ import os
 import numpy.random as random
 from utils.dataset_utils import * 
 
-
 ################################################################
 #                    Test Dataset
 ################################################################
 class TestDataset(data.Dataset):
-    def __init__(self, filenames, captions, att_masks, split="", args=None):
+    def __init__(self, filenames, captions, att_masks, split, args=None):
         
         print("\n############## Loading %s dataset ################" % split)
         self.split= split
@@ -54,9 +53,18 @@ class TestDataset(data.Dataset):
         return start + np.argmax(ls)
 
 
+    def get_attr_vector(self, attr_file):
+        with open(attr_file, "r") as f:
+            line = f.read()
+
+        return torch.Tensor([0.0 if int(l) == -1 else 1.0 for l in line.split(",")])
+
+
     def __getitem__(self, index):
         imgs = self.imgs_pair[index]
         pair_label = self.pair_label[index]
+
+        
         data_dir = os.path.join(self.data_dir, "images")
 
         img1_name = os.path.join(imgs[0].split("_")[0], imgs[0])
@@ -68,6 +76,12 @@ class TestDataset(data.Dataset):
 
         key1 = img1_name[:-4]
         key2 = img2_name[:-4]
+
+        attr_file1 = os.path.join(self.data_dir, "attributes", self.split, key1 + ".txt")
+        attr_file2 = os.path.join(self.data_dir, "attributes", self.split, key2 + ".txt")
+
+        attr_vec1 = self.get_attr_vector(attr_file1)
+        attr_vec2 = self.get_attr_vector(attr_file2)
 
         img1 = get_imgs(img1_path, self.split, self.model_type)
         img2 = get_imgs(img2_path, self.split, self.model_type)
@@ -92,7 +106,7 @@ class TestDataset(data.Dataset):
         cap1, mask1 = self.captions[new_sent_ix1], self.att_masks[new_sent_ix1]
         cap2, mask2 = self.captions[new_sent_ix2], self.att_masks[new_sent_ix2]
 
-        return img1, img2, cap1, cap2, mask1, mask2, pair_label
+        return img1, img2, cap1, cap2, mask1, mask2,  attr_vec1, attr_vec2, pair_label
 
     def __len__(self):
         return len (self.imgs_pair)

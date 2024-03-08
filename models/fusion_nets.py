@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 
 ############### Fusion ###################
-class LinearFusion(nn.Module):
+class LinearFusion1(nn.Module):
     def __init__(self, args):
-        super(LinearFusion, self).__init__()
+        super(LinearFusion1, self).__init__()
         self.conv = nn.Conv2d(256, 36, kernel_size=(3, 3), bias=False, stride=2, padding="valid")
         self.relu = nn.ReLU()
         self.fc_out = nn.Linear(548, args.fusion_final_dim) # change 512, 576, 640, 704, 768
@@ -21,8 +21,8 @@ class LinearFusion(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
 
 
-    def forward(self, img, img_features, sent_emb):
-        img = self.avg_pool(self.relu(self.conv(img)))
+    def forward(self, region, img_features, sent_emb):
+        img = self.avg_pool(self.relu(self.conv(region)))
         img = img.view(img.size(0), -1)
         img = F.normalize(img, p=2, dim=1)
     
@@ -32,17 +32,19 @@ class LinearFusion(nn.Module):
         return x
 
 
-class LinearFusion1(nn.Module):
+class LinearFusion(nn.Module):
     def __init__(self, args):
         super(LinearFusion, self).__init__()
         self.fc_out = nn.Linear(512, args.fusion_final_dim) # change 512, 576, 640, 704, 768
         self.dropout = nn.Dropout(0.2)
+        #self.batchnorm = nn.BatchNorm1d(args.fusion_final_dim)
 
 
-    def forward(self, img_features, sent_emb):
+    def forward(self, region, img_features, sent_emb):
         concat_features =  torch.cat((img_features, sent_emb), dim=1)
         x = self.fc_out(concat_features)
-        x = self.dropout(x)
+        self.dropout(x)
+        #x = self.batchnorm(x)
         return x
 
 
@@ -171,7 +173,6 @@ class FCFM(nn.Module):
         return torch.concat((iw, gl_img, sent), dim=1) 
 
 
-
 class ParagraphLevelCFA(nn.Module):
     def __init__(self):
         super(ParagraphLevelCFA, self).__init__()
@@ -189,7 +190,6 @@ class ParagraphLevelCFA(nn.Module):
         sent_feats = sent_feats[0].contiguous().view(bs, -1) #batch_size x 64
         self.ln(sent_feats)
         return sent_feats  
-
 
 
 class ConcatAttention(nn.Module):
