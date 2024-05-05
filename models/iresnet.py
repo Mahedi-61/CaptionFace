@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+from torchsummary import summary
 
 __all__ = ['iresnet18', 'iresnet34', 'iresnet50', 'iresnet100', 'iresnet200']
 using_ckpt = False
@@ -188,7 +189,7 @@ def iresnet50(pretrained=False, progress=True, **kwargs):
                     progress, **kwargs)
 
 
-def iresnet100(pretrained=False, progress=True, **kwargs):
+def iresnet101(pretrained=False, progress=True, **kwargs):
     return _iresnet('iresnet100', IBasicBlock, [3, 13, 30, 3], pretrained,
                     progress, **kwargs)
 
@@ -200,6 +201,7 @@ def iresnet200(pretrained=False, progress=True, **kwargs):
 
 
 if __name__ == "__main__":
-    x = torch.randn((16, 3,128,128))
+    x = torch.randn((16, 3, 112, 112))
     net = iresnet18()
-    y = net(x)
+    x, lc_feats = net(x)
+    print(x.size())

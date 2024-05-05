@@ -64,14 +64,8 @@ def get_attr_vector(caption):
             elif item.split(" ")[-1] in caption:
                 ls_wearing[i] = 1.0
 
-        if "earrings" in caption:
-            ls_wearing[0] = 1.0
-
-        if isWord("red")(caption):
+        if isWord("makeup")(caption):
             ls_wearing[2] = 1.0
-
-        if isWord("cap")(caption):
-                ls_wearing[1] = 1.0
 
         #print(ls_wearing)
 
@@ -86,8 +80,9 @@ def get_attr_vector(caption):
 
         if "receding" in caption:
                 ls_hair[0] = 1.0
+                ls_hair[1] = 0.0
 
-        if "wavy" in caption or "curly" in caption:
+        if "wavy" in caption:
                 ls_hair[3] = 0.0
                 ls_hair[4] = 1.0
 
@@ -102,23 +97,21 @@ def get_attr_vector(caption):
                 ls_hair[8] = 0.0
 
         if isWord("hair")(caption):
-            substring = get_substring(caption, "hair")
-            if "gray" in substring:
+            if "gray" in caption:
                 ls_hair[5] = 1.0
                 ls_hair[7] = 0.0
                 ls_hair[8] = 0.0
                 
-            elif "black" in substring:
+            elif "black" in caption:
                 ls_hair[5] = 0.0
                 ls_hair[7] = 1.0
                 ls_hair[8] = 0.0
 
-            elif "brown" in substring:
+            elif "brown" in caption:
                 ls_hair[5] = 0.0
                 ls_hair[7] = 0.0
                 ls_hair[8] = 1.0
         #print(ls_hair)
-
 
         #################### eye
         str_eye = ["bags under eyes", "arched eyebrows", "eyeglasses", "narrow eyes", "bushy eyebrows"] #5
@@ -133,11 +126,8 @@ def get_attr_vector(caption):
         if "eyeglass" in caption:
                 ls_eye[2] = 1.0
 
-        if isWord("eyebrows")(caption):
-            substring = get_substring(caption, "eyebrows")
-            if "thin" in substring: ls_eye[4] = 0.0
-            if "thick" in substring or "bushy" in substring : ls_eye[4] = 1.0
-        #print(ls_eye)
+        if "thin eyebrows" in caption:
+                ls_eye[4] = -1.0
 
 
         ################# man
@@ -155,36 +145,25 @@ def get_attr_vector(caption):
                 ls_man[4] = 1.0
                 ls_man[3] = 1.0
 
-        if str_man[5].split(" ")[-1] in caption:
-                ls_man[5] = 1.0
-
-        if "cleanshaven" in caption:
-            ls_man[0] = 0.0
-            ls_man[2] = 1.0
-            ls_man[3] = 1.0
-            ls_man[4] = 0.0
-            ls_man[5] = 0.0
-
         if ls_man[2] != 1.0 and isWord("beard")(caption):
-            ls_man[2] = 0.0 
+            ls_man[2] = -1.0 
             
-        for sub in ["man", "he"]:
+        for sub in ["man", "he", "He"]:
             if sub in caption: ls_man[3] = 1.0
 
-        for sub in ["woman", "she", "lady"]:
-            if sub in caption: ls_man[3] = 0.0
+        for sub in ["woman", "she", "She"]:
+            if sub in caption: ls_man[3] = -1.0
 
-        if ls_man[0] == 1.0 or ls_man[1] == 1.0 or ls_man[2] == 0.0:
+        if ls_man[0] == 1.0 or ls_man[1] == 1.0:
             ls_man[3] = 1.0
 
-        if ls_man[3] == 0.0: #for female
+        if ls_man[3] == -1.0: #for female
             ls_man[0] = 0.0
             ls_man[1] = 0.0
             ls_man[2] = 1.0
             ls_man[4] = 0.0
             ls_man[5] = 0.0
         #print(ls_man)
-
 
         ######## mostly female face
         str_female = ["attractive", "young", "smiling", "blurry", "chubby", "double chin",  "high cheekbones", "rosy cheeks"] #8
@@ -194,17 +173,11 @@ def get_attr_vector(caption):
             if item in caption:
                 ls_female[i] = 1.0
 
-            elif item.split(" ")[-1] in caption:
+            elif item.split(" ")[0] in caption:
                 ls_female[i] = 1.0
 
         if "cheekbone" in caption:
                 ls_female[6] = 1.0
-
-        if str_female[5].split(" ")[-1] in caption:
-                ls_female[5] = 1.0
-
-        for sub in ["old", "aged"]:
-            if sub in caption: ls_female[1] = 0.0
 
         #print(ls_female)
 
@@ -219,52 +192,42 @@ def get_attr_vector(caption):
             elif (i <= 3) and (item.split(" ")[0] in caption):
                 ls_face[i] = 1.0
 
-        if "teeth" in caption:
-            ls_face[0] = 1.0
 
-        if "oblong" in caption:
-            ls_face[1] = 1.0
-
-        if ls_face[2] == 0.0 and "complexion" in caption:
+        if ls_face[2] == 0.0 :
             if "fair" in caption:
-                ls_face[2] = 0.0
-            elif "tan" in caption:
-                ls_face[2] = 1.0
+                ls_face[2] = -1.0
 
         if "pointed" in caption:
             ls_face[3] = 1.0
 
 
-        if ls_face[4] == 0.0 and ls_wearing[2] != 1.0 and isWord("lips")(caption):
-            substring = get_substring(caption, "lips")
-
-            if "big" in substring or "thick" in substring or "full" in substring:
+        if "lips" in caption:
+            if "full" in caption:
                 ls_face[4] = 1.0
-            elif "small" in substring or "thin" in substring:
-                ls_face[4] = 0.0
+            elif "small" in caption:
+                ls_face[4] = -1.0
 
-        if ls_face[5] == 0.0 and isWord("nose")(caption):
-            substring = get_substring(caption, "nose")
-            if "big" in substring or "wide" in substring or "long" in substring:
+        if "nose" in caption:
+            if "wide" in caption:
                 ls_face[5] = 1.0
-            elif "small" in substring or "narrow" in substring or "short" in substring:
-                ls_face[5] = 0.0
+            elif "small" in caption:
+                ls_face[5] = -1.0
 
         #print(ls_face)
         return ls_wearing + ls_hair + ls_eye + ls_man + ls_female + ls_face 
 
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     with open("./data/face2text/annotations/output.csv", "r") as f:
         captions = f.read().encode('utf-8').decode('utf8').split('\n')
         cnt = 0
         all_list = []
-        for i, cap in enumerate(captions[1:2000]):
+        for i, cap in enumerate(captions[2:3]):
             cap = cap.replace("\ufffd\ufffd", " ")
             #image_file = cap.split(",")[0]
             cap_int =  get_attr_vector("".join(cap.split(",")[1:])) #[int(c) for c in cap.split(",")[1:]]
-            
+            """
             if cap_int in all_list:
                 print("############################## match")
                 print(cap)
@@ -273,6 +236,7 @@ if __name__ == "__main__":
                 print("here , ", all_list.index(cap_int))
             else:
                  all_list.append(cap_int)
-               
+            """
 
-        #print(all_list)
+            print(cap)
+            print(cap_int)

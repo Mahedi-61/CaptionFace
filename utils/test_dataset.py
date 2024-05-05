@@ -5,16 +5,17 @@ import os
 import numpy.random as random
 from utils.dataset_utils import * 
 
+
 ################################################################
 #                    Test Dataset
 ################################################################
 class TestDataset(data.Dataset):
     def __init__(self, filenames, captions, att_masks, split, args=None):
         
-        print("\n############## Loading %s dataset ################" % split)
+       
         self.split= split
         self.data_dir = args.data_dir
-        self.dataset_name = args.dataset_name
+        self.dataset = args.dataset
         self.captions_per_image = args.captions_per_image
         self.model_type = args.model_type 
 
@@ -24,12 +25,16 @@ class TestDataset(data.Dataset):
         self.en_type = args.en_type 
         self.att_masks = att_masks
 
+        print("\n############## Loading %s dataset ################" % self.dataset)
         self.class_id = load_class_id(os.path.join(self.data_dir, self.split))
 
         if split == "test":
-            self.test_pair_list = args.test_pair_list
+            if args.is_ident == True: self.test_pair_list = args.test_ver_acc_list
+            else: self.test_pair_list = args.test_ver_list
+
         elif split == "valid":
-             self.test_pair_list = args.valid_pair_list
+            if args.is_ident == True: self.test_pair_list = args.valid_ver_acc_list
+            else: self.test_pair_list = args.valid_ver_list
 
         self.imgs_pair, self.pair_label = self.get_test_list()
 
@@ -64,7 +69,6 @@ class TestDataset(data.Dataset):
         imgs = self.imgs_pair[index]
         pair_label = self.pair_label[index]
 
-        
         data_dir = os.path.join(self.data_dir, "images")
 
         img1_name = os.path.join(imgs[0].split("_")[0], imgs[0])
@@ -72,7 +76,6 @@ class TestDataset(data.Dataset):
 
         img1_path = os.path.join(data_dir, self.split, img1_name)
         img2_path = os.path.join(data_dir, self.split, img2_name)
-
 
         key1 = img1_name[:-4]
         key2 = img2_name[:-4]
@@ -86,27 +89,19 @@ class TestDataset(data.Dataset):
         img1 = get_imgs(img1_path, self.split, self.model_type)
         img2 = get_imgs(img2_path, self.split, self.model_type)
 
+        img1_h = do_flip_test_images(img1_path, self.model_type)
+        img2_h = do_flip_test_images(img2_path, self.model_type)
+
         real_index1 = self.filenames.index(key1)
         real_index2 = self.filenames.index(key2)
        
         new_sent_ix1 = self.get_best_caption_id(real_index1)
         new_sent_ix2 = self.get_best_caption_id(real_index2)
-        
-        """
-        #sent_ix1 = random.randint(0, self.captions_per_image)
-        #select the first sentence 
-        sent_ix1 = 0
-        new_sent_ix1 = (real_index1 * self.captions_per_image) + sent_ix1
-        
-        # randomly select another sentence
-        sent_ix2 = 0 #random.randint(0, self.captions_per_image)
-        new_sent_ix2 = (real_index2 * self.captions_per_image) + sent_ix2
-        """
 
         cap1, mask1 = self.captions[new_sent_ix1], self.att_masks[new_sent_ix1]
         cap2, mask2 = self.captions[new_sent_ix2], self.att_masks[new_sent_ix2]
 
-        return img1, img2, cap1, cap2, mask1, mask2,  attr_vec1, attr_vec2, pair_label
+        return img1, img1_h, img2, img2_h, cap1, cap2, mask1, mask2,  attr_vec1, attr_vec2, pair_label
 
     def __len__(self):
         return len (self.imgs_pair)

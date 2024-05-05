@@ -14,7 +14,8 @@ from torch.autograd import Variable
 ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
 from types import SimpleNamespace
-from utils.prepare import (prepare_arcface, prepare_text_encoder, prepare_image_head, prepare_fusion_net)
+from utils.prepare import (prepare_arcface, prepare_adaface, prepare_magface, prepare_text_encoder, prepare_image_head, prepare_fusion_net)
+
 
 #48_1
 def get_sent_emb(args):
@@ -73,12 +74,24 @@ class ArcFace(torch.nn.Module):
         return img  
 
 
+class AdaFace(torch.nn.Module):
+    def __init__(self, image_encoder):
+        super(AdaFace, self).__init__()
+        self.model = image_encoder.module
+        
+    def forward(self, x):
+        img, local_feats = self.model(x)
+        return img  
 
 if __name__ == "__main__":
     args = SimpleNamespace()
     args.gpu_id = [0]
     args.device = "cuda"
-    args.weights_arcface = "./weights/pretrained/arcface_ir18_ms1mv3.pth"
+    args.weights_arcface_18 = "./weights/pretrained/arcface_ir18_ms1mv3.pth"
+    args.weights_arcface_50 = "./weights/pretrained/arcface_ir50_ms1mv3.pth"
+    args.weights_magface_50 = "./weights/pretrained/magface_ir50_ms1mv2.pth"
+    args.weights_arcface_101 = "./weights/pretrained/arcface_ir101_ms1mv3.pth"
+    args.backend_path = "./weights/finetuned/arcface_celeba.pth"
 
     args.num_workers = 1 
     args.bert_words_num = 32
@@ -91,15 +104,15 @@ if __name__ == "__main__":
     args.gl_img_dim = 256
     args.gl_text_dim = 256
 
-
     args.split = "train" 
-    arc_model = prepare_arcface(args)
+    args.architecture = "ir_18"
+    arc_model = prepare_arcface(args, train_mode = "fixed")
     for name, param in arc_model.named_parameters():
         param.requires_grad = True 
 
     #arcface 
     trans = transforms.Compose([transforms.ToTensor()])
-    img = Image.open("./data/celeba/images/train/62/62_8.jpg").convert("RGB")
+    img = Image.open("./data/celeba/images/train/2/2_1.jpg").convert("RGB")
     input_tensor = trans(img)
     input_tensor = input_tensor.unsqueeze(dim=0).cuda()
     targets = None #[ClassifierOutputTarget(281)]
@@ -116,13 +129,15 @@ if __name__ == "__main__":
     visualization_arc = show_cam_on_image(img, grayscale_cam, use_rgb=True)
 
 
+
+    """
     ###################### Ours ####################
     models = [1, 2, 3, 4]
     #models = [8, 9, 10, 11, 12, 13, 14]
     visualization_tgfr = []
     for model_num in models:
-        args.text_encoder_path = "./checkpoints/celeba/TGFR/BERT_arcface/linear/hobe_insh/encoder_BERT_linear_%d.pth" % model_num
-        args.image_encoder_path = "./checkpoints/celeba/TGFR/BERT_arcface/linear/hobe_insh/fusion_linear_arcface_%d.pth" % model_num
+        args.text_encoder_path = "./checkpoints/celeba/TGFR/BERT_arcface/linear/encoder_BERT_linear_%d.pth" % model_num
+        args.image_encoder_path = "./checkpoints/celeba/TGFR/BERT_arcface/linear//fusion_linear_arcface_%d.pth" % model_num
 
         args.split = "test" 
         sent_emb = get_sent_emb(args)
@@ -144,15 +159,17 @@ if __name__ == "__main__":
             grayscale_cam_tg = cam_tgfr(input_tensor=x, targets=targets)
             grayscale_cam_tg = grayscale_cam_tg[0, :]
             visualization_tgfr.append(show_cam_on_image(img, grayscale_cam_tg, use_rgb=True)) 
-
-    f, axarr = plt.subplots(2, 3)
+        """
+   
+   
+    f, axarr = plt.subplots(1, 3)
     axarr = axarr.flatten()
     axarr[0].imshow(img)
     axarr[1].imshow(visualization_arc)
-    axarr[2].imshow(visualization_tgfr[0])
-    axarr[3].imshow(visualization_tgfr[1])
-    axarr[4].imshow(visualization_tgfr[2])
-    axarr[5].imshow(visualization_tgfr[3])
+    #axarr[2].imshow(visualization_ada)
+    #axarr[3].imshow(visualization_tgfr[0])
+    #axarr[4].imshow(visualization_tgfr[1])
+    #axarr[5].imshow(visualization_tgfr[2])
 
-    #plt.savefig("r/65_2_She is wearing necklace, and earrings. She has brown hair, rosy cheeks, arched eyebrows, and mouth slightly open. She is young, and smiling..svg")
-    plt.show()
+    #plt.show()
+    plt.savefig("r/2_1_18.svg")

@@ -3,16 +3,12 @@ import torch.nn as nn
 import torch.nn.parallel
 from torch.autograd import Variable
 from torchvision import models
-import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from transformers import (BertModel, AlignTextModel, CLIPTextModel, 
                           FlavaTextModel, BlipTextModel, GroupViTTextModel)
 import torch.nn.functional as F
 from models.fusion_nets import SelfAttention 
-from torchsummary import summary
 import numpy as np 
-import math 
 
 
 def l2_norm(input, axis=1):
@@ -78,8 +74,8 @@ class TextEncoder(nn.Module):
         self.encoder = get_encoder(args)
 
         print("Loading : ", args.bert_type)
-
-        unfreeze_layers = ['layer.8','layer.9','layer.10', 'layer.11', 'pooler']
+        unfreeze_layers = ['layer.5', 'layer.6', 'layer.7', 'layer.8',
+                           'layer.9','layer.10', 'layer.11', 'pooler']
         
         for name, param in self.encoder.named_parameters():
             param.requires_grad = False
@@ -170,10 +166,10 @@ class TextHeading(nn.Module):
 
 
 class ImageHeading(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, feature_dim=512):
         super(ImageHeading, self).__init__()
-        self.project_global = ProjectionHead(input_dim=512, projection_dim=args.gl_img_dim)
-        self.imim = IMIM(args, channel_dim = 256)
+        self.project_global = ProjectionHead(input_dim=feature_dim, projection_dim=args.gl_img_dim)
+        self.imim = IMIM(args, channel_dim = feature_dim // 2)
         
     def forward(self, global_image, local_image):
         local_image = self.imim(local_image)
@@ -182,13 +178,11 @@ class ImageHeading(nn.Module):
         return  global_image, local_image, 
 
 
-
 class IMIM(nn.Module):
     def __init__(self, args, channel_dim):
         super(IMIM, self).__init__()
         self.channel_dim = channel_dim
         self.project_local =  nn.Conv2d(self.channel_dim, args.gl_img_dim, kernel_size=(1, 1), padding=0) 
-        #ProjectionHead(input_dim=256, projection_dim=args.gl_img_dim)
         
         self.bn_img = nn.BatchNorm2d(self.channel_dim)
         self.sa = SelfAttention(channel_dim = self.channel_dim, scale=1)
@@ -206,12 +200,10 @@ class IMIM(nn.Module):
         #img = self.relu(self.conv1x1_2(img))
 
         #img = img.permute((0, 2, 3, 1))
-        #img = self.project_local(img) #batch_size x 14 x 14 x 256
+        img = self.project_local(img) #batch_size x 14 x 14 x 256
         img = F.normalize(img, p=2, dim=-1)
         #img = img.permute((0, 3, 1, 2))
         return img
-
-
 
 if __name__ == "__main__":
     from easydict import EasyDict as edict

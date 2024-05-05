@@ -5,36 +5,77 @@ import numpy as np
 import torch
 import torch.nn as nn
 from tqdm import tqdm 
-import os 
-import matplotlib.pyplot as plt 
+from torch.nn import functional as F
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
 from utils.dataset_utils import encode_Bert_tokens, all_attributes
 from utils.attribute import caps_all_attributes
 
 
-
 ############   modules   ############
-def cal_accuracy(y_score, y_true):
-    y_score = np.asarray(y_score)
-    y_true = np.asarray(y_true)
-    best_acc = 0
-    best_th = 0
+def do_dis_plot(preds, labels, args):
+    y_pos = []
+    y_neg = []
 
-    for i in range(len(y_score)):
-        th = y_score[i]
-        y_test = (y_score >= th)
-        acc = np.mean((y_test == y_true).astype(int))
-        if acc > best_acc:
-            best_acc = acc
-            best_th = th
+    for i, label in enumerate(labels):
+        if label == 1:
+            y_pos.append(preds[i])
+        elif label == 0:
+            y_neg.append(preds[i])
 
-    return (best_acc, best_th)
+    y_neg = y_neg [:len(y_pos)]
+
+    with np.load("adaface_resnet_18.npz") as file:
+        y_pos_18 = file["x"]
+        y_neg_18 = file["y"]
+
+    #np.savez("adaface_resnet_18.npz", x=y_pos, y=y_neg)
+    
+    plt.figure()
+    df = pd.DataFrame({"y_pos" : y_pos, "y_pos_18" : y_pos_18, 
+                       "y_neg" : y_neg, "y_neg_18" : y_neg_18})
+    
+    chart = sns.displot(data=df,  kind='kde', fill=True, height=5, aspect=1.5)
+    plt.savefig("result.eps")
+    
 
 
-def get_features(model, imgs):
-    gl_feats, lc_feats = model(imgs)
-    return gl_feats, lc_feats 
+def KFold(n, n_folds=10):
+    folds = []
+    base = list(range(n))
+    for i in range(n_folds):
+        frac = int(n/n_folds)
+        test = base[i * frac : (i + 1) * frac]
+        train = list(set(base) - set(test))
+        folds.append([train, test])
+    return folds
+
+
+def eval_acc(threshold, diff):
+    y_true = []
+    y_predict = []
+    for d in diff:
+        same = 1 if float(d[0]) > threshold else 0
+        y_predict.append(same)
+        y_true.append(int(d[1]))
+    y_true = np.array(y_true)
+    y_predict = np.array(y_predict)
+    accuracy = 1.0 * np.count_nonzero(y_true == y_predict) / len(y_true)
+    return accuracy
+
+
+def find_best_threshold(thresholds, predicts):
+    best_threshold = best_acc = 0
+    for threshold in thresholds:
+        accuracy = eval_acc(threshold, predicts)
+        if accuracy >= best_acc:
+            best_acc = accuracy
+            best_threshold = threshold
+    return best_threshold
 
 
 def get_tpr(fprs, tprs):
@@ -61,30 +102,47 @@ def calculate_scores(y_score, y_true, args):
     tpr_fpr_row = get_tpr(fprs, tprs)
     total_score = tpr_fpr_row[0] + tpr_fpr_row[1] + tpr_fpr_row[2] 
 
-    print("AUC {:.4f} | EER {:.4f} | TPR@FPR=1e-6 {:.4f} | TPR@FPR=1e-5 {:.4f} | TPR@FPR=1e-4 {:.4f} | TPR@FPR=1e-3 {:.4f} | score {:.4f}".
-        format(auc, eer, tpr_fpr_row[0], tpr_fpr_row[1], tpr_fpr_row[2], tpr_fpr_row[3], total_score))
+    print("AUC {:.4f} | EER {:.4f} | TPR@FPR=1e-6 {:.4f} | TPR@FPR=1e-5 {:.4f} | TPR@FPR=1e-4 {:.4f} | score {:.4f}".
+        format(auc, eer, tpr_fpr_row[0], tpr_fpr_row[1], tpr_fpr_row[2], total_score))   #| TPR@FPR=1e-3 {:.4f},  tpr_fpr_row[3]
 
-    if args.is_roc == True:
+    """
         filename = os.path.join(".", args.roc_file + '.npy')
         print("saving npy file in :", filename)
         with open(filename, 'wb') as f:
             np.save(f, y_true)
             np.save(f, y_score)
+    """
 
 
-def calculate_identification_acc(y_score, args):
-    with open(os.path.join(args.checkpoints_path, "ident_file"), "wb") as f:
-        np.save(f, y_score)
 
-    total_sub = args.test_sub
-    pair_each_sub = len(y_score) // total_sub
-    print("total subjects: ", total_sub)
+def calculate_acc(preds, labels, args):
+    predicts = []
+    num_imgs = len(preds)
+    with torch.no_grad():
+        for i in range(num_imgs):
 
-    y_score = np.array(y_score).reshape((total_sub, pair_each_sub))
-    y_score = np.argmax(y_score, axis=1)
-    y_true = np.arange(total_sub)
-    acc = sum([1 for i, j in zip(y_score, y_true) if i==j])
-    print("identification accuracy (%)", (acc/total_sub) * 100)
+            #distance = f1.dot(f2) / (f1.norm() * f2.norm() + 1e-5)
+            predicts.append('{}\t{}\n'.format(preds[i], labels[i]))
+
+    
+    accuracy = []
+    thd = []
+    folds = KFold(n=num_imgs, n_folds=10)
+    thresholds = np.arange(-1.0, 1.0, 0.01)
+    predicts = np.array(list(map(lambda line: line.strip('\n').split(), predicts)))
+
+    print(len(predicts))
+    print("starting fold ....")
+    for idx, (train, test) in enumerate(folds):
+        best_thresh = find_best_threshold(thresholds, predicts[train])
+        accuracy.append(eval_acc(best_thresh, predicts[test]))
+        thd.append(best_thresh)
+        print("finding fold: ", idx)
+
+    print('ACC={:.4f} std={:.4f} thd={:.4f}'.format(np.mean(accuracy), 
+                                np.std(accuracy), np.mean(thd)))
+    return np.mean(accuracy), predicts
+
 
 
 def attribute_analysis(img, img_attr, attr_vec, text_attr):
@@ -106,11 +164,13 @@ def attribute_analysis(img, img_attr, attr_vec, text_attr):
     print("\n\n\n")
 
 
-def test(test_dl, model, head, image_text_attr, fusion_net, text_encoder, text_head, args):
+def test(test_dl, model, image_head, image_text_attr, 
+         fusion_net, text_encoder, text_head, args):
+    
     device = args.device
     fusion_net.eval()
     model.eval() 
-    head.eval()
+    image_head.eval()
     text_encoder.eval()
     text_head.eval()
     image_text_attr.eval()
@@ -120,39 +180,33 @@ def test(test_dl, model, head, image_text_attr, fusion_net, text_encoder, text_h
     loop = tqdm(total=len(test_dl))
     with torch.no_grad():
         for step, data in enumerate(test_dl, 0):
-            img1, img2, caption1, caption2, mask1, mask2, attr_vec1, attr_vec2, pair_label = data
+            img1, img1_h, img2, img2_h, caption1, caption2, mask1, mask2, attr_vec1, attr_vec2, pair_label = data
 
             img1 = img1.to(device) 
             img2 = img2.to(device) 
-            attr_vec1 = attr_vec1.to(device)
-            attr_vec2 = attr_vec2.to(device)
             pair_label = pair_label.to(device)
 
             # get global and local image features from face encoder
             if args.model_type == "arcface":
-                gl_feat1,  local_feat1 = model(img1)
-                gl_feat2,  local_feat2 = model(img2)
+                gl_img1,  local_feat1 = model(img1)
+                gl_img2,  local_feat2 = model(img2)
 
             elif args.model_type == "adaface":
                 global_feat1,  local_feat1, norm = model(img1)
                 global_feat2,  local_feat2, norm = model(img2)
 
-            global_feat1,  local_feat1 = head(gl_feat1,  local_feat1)
-            global_feat2,  local_feat2 = head(gl_feat2,  local_feat2)
-
+            global_feat1,  local_feat1 = image_head(gl_img1,  local_feat1)
+            global_feat2,  local_feat2 = image_head(gl_img2,  local_feat2)
 
             # get word and caption features from text encoder
             words_emb1, sent_emb1 = encode_Bert_tokens(text_encoder, text_head, caption1, mask1, args)
             words_emb2, sent_emb2 = encode_Bert_tokens(text_encoder, text_head, caption2, mask2, args) 
 
-            sent_emb1 = sent_emb1.to(device)
-            sent_emb2 = sent_emb2.to(device)
 
-            words_emb1 = words_emb1.to(device) 
-            words_emb2 = words_emb2.to(device) 
-
-            """
             if args.printing_attr == True:
+                attr_vec1 = attr_vec1.to(device)
+                attr_vec2 = attr_vec2.to(device)
+
                 img_attr1 = torch.sigmoid(image_text_attr(global_feat1))
                 img_attr2 = torch.sigmoid(image_text_attr(global_feat2)) 
 
@@ -161,21 +215,19 @@ def test(test_dl, model, head, image_text_attr, fusion_net, text_encoder, text_h
 
                 #attribute_analysis(img1[0], img_attr1[0], attr_vec1[0], text_attr1[0])
                 #attribute_analysis(img2[0], img_attr2[0], attr_vec2[0], text_attr2[0])
-            """
+
             # sentence & word featurs 
-            if args.fusion_type == "fcfm":
-                out1 = fusion_net(local_feat1, words_emb1,  global_feat1, sent_emb1)
-                out2 = fusion_net(local_feat2, words_emb2,  global_feat2, sent_emb2)
-
-            elif args.fusion_type == "linear":
-                out1 =  fusion_net(local_feat1, global_feat1, sent_emb1)
-                out2 =  fusion_net(local_feat2, global_feat2, sent_emb2)
-
-            elif args.fusion_type == "CMF":
-                out1 = fusion_net(local_feat1, words_emb1,  global_feat1, sent_emb1)
-                out2 = fusion_net(local_feat2, words_emb2,  global_feat2, sent_emb2)
-
+            out1 = fusion_net(local_feat1, words_emb1,  global_feat1, sent_emb1)
+            out2 = fusion_net(local_feat2, words_emb2,  global_feat2, sent_emb2)
             del local_feat1, local_feat2, words_emb1, words_emb2
+
+            #gl_img1 = F.normalize(gl_img1, p=2, dim=1)
+            #out1 = F.normalize(out1,  p=2, dim=1)
+            out1 = torch.cat((gl_img1, out1), dim=1)
+
+            #gl_img2 = F.normalize(gl_img2, p=2, dim=1)
+            #out2 = F.normalize(out2, p=2, dim=1)
+            out2 = torch.cat((gl_img2, out2), dim=1)
 
             cosine_sim = nn.CosineSimilarity(dim=1, eps=1e-6)
             pred = cosine_sim(out1, out2)
@@ -190,5 +242,5 @@ def test(test_dl, model, head, image_text_attr, fusion_net, text_encoder, text_h
 
     calculate_scores(preds, labels, args)
     if args.is_ident == True:
-        calculate_identification_acc(preds, args)
+        calculate_acc(preds, labels, args)
 

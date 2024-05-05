@@ -67,6 +67,21 @@ def get_imgs(img_path, split, model_type="arcface"):
     return img
 
 
+def do_flip_test_images(img_path, model_type="arcface"):
+    img = np.array(Image.open(img_path).convert('RGB')) 
+    tfms = A.Compose([
+        A.HorizontalFlip(p = 1),
+        A.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], always_apply=True),
+        ToTensorV2()
+    ])
+
+    img = tfms(image=img)["image"] 
+    if model_type == "adaface": 
+        permute = [2, 1, 0]
+        img = img[permute, :, :] #RGB --> BGR
+    return img
+
+
 def load_captions_Bert(data_dir, filenames, args):
     # convert the raw text into a list of tokens.
     # attention_mask (which tokens should be used by the model 1 - use or 0 - don’t use).
@@ -82,11 +97,6 @@ def load_captions_Bert(data_dir, filenames, args):
     elif args.bert_type == "blip":
          tokenizer = AutoTokenizer.from_pretrained(args.blip_config, use_fast=False)
 
-    elif args.bert_type == "falva":
-         tokenizer = AutoTokenizer.from_pretrained(args.falva_config, use_fast=False)
-    
-    elif args.bert_type == "groupvit":
-         tokenizer = CLIPTokenizer.from_pretrained(args.groupvit_config, use_fast=False)
 
     all_captions = []
     all_attention_mask = []

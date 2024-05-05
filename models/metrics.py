@@ -245,13 +245,13 @@ class AdaFace(nn.Module):
         return scaled_cosine_m
 
 
-class Classifier(nn.Module):
-    def __init__(self, in_features, out_features):
-        super(Classifier, self).__init__()
-        self.fc = nn.Linear(in_features, out_features)
-        #nn.init.normal_(self.fc.weight.data, std=0.001)
-        #nn.init.constant_(self.fc.bias.data, val=0.0)
-        
+class TopLayer(nn.Module):  
+    def __init__(self, input_dim, num_classes):
+        super().__init__()
+        self.flatten = nn.Flatten()
+        self._dropout = nn.Dropout(p = 0.2)
+        self._fc = nn.Linear(input_dim, num_classes)
+
     def forward(self, x):
-        logits = self.fc(x)
-        return logits
+        x = self.flatten(x)
+        return self._fc(self._dropout(x))

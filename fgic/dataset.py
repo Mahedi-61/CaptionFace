@@ -1,5 +1,5 @@
 from torch.utils.data import Dataset,DataLoader
-import os 
+import os, random
 from PIL import Image
 import torch 
 import torchvision.transforms as transforms
@@ -9,14 +9,17 @@ def get_images_labels(filename):
     fh = open(filename, 'r')
     imgs = []
     labels = []
+    captions = []
+
     for line in fh:
         line = line.strip('\n')
         line = line.rstrip()
         words = line.split()
         imgs.append(os.path.join("./data/cub/images", words[0])) 
         labels.append( int(words[1]) )
+        captions.append(os.path.join("./data/cub/text", words[0].replace(".jpg", ".txt")))
 
-    return imgs, labels
+    return imgs, labels, captions
 
 
 def get_transform(train):
@@ -43,30 +46,42 @@ def get_transform(train):
 
 
 class CUBDataset(Dataset):
-    def __init__(self, train = True):
+    def __init__(self, train, args):
+        self.train = train
+        if self.train == True: 
+            filename = os.path.join(args.train_imgs_list)
+            
+        elif self.train == False:
+            filename = os.path.join(args.test_imgs_list)
 
-        if train == True: 
-            filename = os.path.join("./data/cub/train_images_shuffle.txt")
-        elif train == False:
-            filename = os.path.join("./data/cub/test_images_shuffle.txt")
-
-        self.imgs, self.labels = get_images_labels(filename) 
-        self.transform = get_transform(train)
+        self.imgs, self.labels, self.captions = get_images_labels(filename) 
+        self.transform = get_transform(self.train)
+        self.args = args
 
     def __getitem__(self, index):
         img = self.imgs[index]
         label = self.labels[index]
         img = Image.open(img).convert('RGB')
         img = self.transform(img)
+        
+        # random select a sentence
+        if self.train == True:
+            sent_ix = random.randint(0, self.args.captions_per_image - 1)
+        elif self.train == False:
+            sent_ix = 0 #for consistent resutls 
+            
+        with open(self.captions[index], "r") as f:
+            texts = f.read().splitlines()
 
-        return img, torch.tensor(label)
+        return img, torch.tensor(label), texts[sent_ix]
 
     def __len__(self):
         return len(self.imgs)
 
 
 if __name__ == "__main__":
-    cub = CUBDataset(train=False) 
-    img, label = cub.__getitem__(0)
-    print(img.shape)
-    print(label)
+    import types 
+    args = types.SimpleNamespace()
+    args.captions_per_image = 10
+    args.train_imgs_list = "./data/cub/train_images_shuffle.txt"
+    cub = CUBDataset(train=True, args=args)

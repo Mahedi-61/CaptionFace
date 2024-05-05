@@ -14,7 +14,7 @@ sys.path.insert(0, ROOT_PATH)
 
 from utils.utils import mkdir_p,  merge_args_yaml
 from utils.prepare import prepare_adaface, prepare_arcface
-from cfg.config_space import face2text_cfg, celeba_cfg, celeba_dialog_cfg, setup_cfg
+from cfg.config_space import face2text_cfg, celeba_cfg, celeba_dialog_cfg, setup_cfg, LFW_cfg
 from types import SimpleNamespace
 
 from utils.modules import test 
@@ -76,7 +76,7 @@ class ValidDataset(torch.utils.data.Dataset):
         self.dataset_name = args.dataset_name
         self.model_type = args.model_type 
 
-        self.class_id = load_class_id(os.path.join(self.data_dir, self.split))
+        #self.class_id = load_class_id(os.path.join(self.data_dir, self.split))
         self.valid_pair_list = args.test_pair_list
         self.imgs_pair, self.pair_label = self.get_test_list()
 
@@ -151,9 +151,9 @@ class Train:
         self.model_type = args.model_type
 
         # prepare dataloader
-        self.train_dl = get_data_loader(self.args, split="train")
+        #self.train_dl = get_data_loader(self.args, split="train")
         self.valid_dl = get_data_loader(self.args, split="valid")
-        self.total_steps = len(self.train_dl) * self.args.max_epoch
+        #self.total_steps = len(self.train_dl) * self.args.max_epoch
         
         print("Loading training and valid data ...")
         self.criterion = losses.FocalLoss(gamma=2)
@@ -186,7 +186,7 @@ class Train:
 
     def build_image_encoders(self):
         if self.model_type == "arcface":
-            self.image_encoder = prepare_arcface(self.args, train_mode="finetune")
+            self.image_encoder = prepare_arcface(self.args, train_mode="fixed") #finetune
             self.image_cls = metrics.ArcMarginProduct(self.args.fusion_final_dim, 
                                     self.args.num_classes, 
                                     s=30.0, 
@@ -194,7 +194,7 @@ class Train:
                                     easy_margin=False)
             
         elif self.model_type == "adaface":
-            self.image_encoder = prepare_adaface(self.args, train_mode="finetune")
+            self.image_encoder = prepare_adaface(self.args, train_mode="fixed")  #finetune
     
             self.image_cls = metrics.AdaFace(self.args.fusion_final_dim,
                                             self.args.num_classes,  
@@ -317,6 +317,9 @@ class Train:
         LR_change_seq = [6, 10]
         gamma = 0.75
         lr = 0.01
+
+        self.test(self.valid_dl, self.image_encoder, args)
+        """
         for epoch in range(self.start_epoch, self.args.max_epoch + 1):
             self.args.current_epoch = epoch
 
@@ -338,6 +341,7 @@ class Train:
             if (epoch > 8 and self.args.do_test == True):
                 print("\nLet's validate the model")
                 self.test(self.valid_dl, self.image_encoder, args)
+        """
 
 
 if __name__ == "__main__":
@@ -352,6 +356,9 @@ if __name__ == "__main__":
     
     elif args.dataset_name == "celeba_dialog":
         args  = SimpleNamespace(**celeba_dialog_cfg.__dict__, **args.__dict__)
+
+    elif args.dataset_name == "LFW":
+        args  = SimpleNamespace(**LFW_cfg.__dict__, **args.__dict__)
     else:
         print("Error: New Dataset !!, dataset doesn't have config file!!")
 
@@ -361,5 +368,5 @@ if __name__ == "__main__":
     torch.manual_seed(args.manual_seed)
 
     torch.cuda.manual_seed_all(args.manual_seed)
-    args.batch_size = 128
+    args.batch_size = 64
     Train(args).main()

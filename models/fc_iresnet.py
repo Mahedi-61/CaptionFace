@@ -152,7 +152,7 @@ class IResNet(nn.Module):
             x = self.conv1(x)
             x = self.bn1(x)
             x = self.prelu(x)
-            print(x.shape)
+ 
             x = self.layer1(x)
             x = self.layer2(x)
             x = self.layer3(x)
@@ -208,4 +208,4 @@ if __name__ == "__main__":
     net = iresnet18() 
     y, gl_feat = net(x)
     #summary(net, (3, 112, 112))
-    #print(gl_feat.size()) 
+    print(gl_feat.size()) 

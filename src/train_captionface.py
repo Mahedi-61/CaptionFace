@@ -1,24 +1,21 @@
 import os, sys, random
 import os.path as osp
-import pprint
-import argparse
-import numpy as np
-
+import argparse, itertools
 import torch
+import numpy as np
+import pprint 
 import torch.nn as nn
+from torch.nn import functional as F 
 from torch.autograd import Variable
 from tqdm import tqdm 
-import itertools
-from datetime import datetime 
+from types import SimpleNamespace
 from transformers import get_linear_schedule_with_warmup
 ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
 
-from utils.utils import mkdir_p,  merge_args_yaml
-from models.losses import sent_loss, words_loss, CMPLoss, global_loss 
-from utils.prepare import (prepare_train_val_loader, prepare_test_loader, prepare_adaface, prepare_arcface)
-from cfg.config_space import face2text_cfg, celeba_cfg, celeba_dialog_cfg, setup_cfg
-from types import SimpleNamespace
+from models.losses import sent_loss, words_loss, CMPLoss 
+from utils.prepare import (prepare_train_val_loader, prepare_test_loader, 
+                           prepare_adaface, prepare_arcface)
 
 from models.fusion_nets import LinearFusion, FCFM, CMF
 from utils.modules import test 
@@ -26,30 +23,18 @@ from models.models import (TextEncoder, TextHeading, ImageHeading)
 from models import metrics, losses 
 from utils.dataset_utils import encode_Bert_tokens
 
-today = datetime.now() 
-import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+my_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def parse_args():
-    cfg_file = "train_bert.yml"
-    print("loading %s" % cfg_file)
-    parser = argparse.ArgumentParser(description='Train Model')
-    parser.add_argument('--cfg', dest='cfg_file', type=str, 
-                        default='./cfg/%s' %cfg_file)
-    
-    file_args = parser.parse_args()
-    return file_args
-
-
-class Train:
+class Trainer:
     def __init__(self, args):
         self.args = args 
+        args.device = my_device
         self.model_type = args.model_type
 
         # prepare dataloader
         self.train_dl, self.valid_dl = prepare_train_val_loader(self.args)
-        self.valid_dl = prepare_test_loader(args)
 
         self.args.len_train_dl = len(self.train_dl)
         self.total_steps = len(self.train_dl) * self.args.max_epoch
@@ -57,9 +42,7 @@ class Train:
         if self.args.is_CMP == True:
             self.cmpm_loss = CMPLoss(num_classes = self.args.num_classes, 
                                     feature_dim = self.args.gl_img_dim)
-            self.cmpm_loss.to(self.args.device)
-        
-        print("Loading training and valid data ...")
+            self.cmpm_loss.to(my_device)
 
         # building image encoder
         self.build_image_encoders() 
@@ -73,21 +56,15 @@ class Train:
         # set the optimizer
         self.get_optimizer() 
 
-        #resume checkpoint
-        self.start_epoch = 1
     
-
     def save_models(self):
-        save_dir = os.path.join(self.args.checkpoints_path, 
-                                self.args.dataset_name,  
-                                self.args.en_type + "_" + self.args.model_type + "_" + self.args.architecture,
-                                self.args.fusion_type,
-                                today.strftime("%m-%d-%y-%H:%M"))
-        mkdir_p(save_dir)
+        save_dir = os.path.join(self.args.checkpoint_path, self.args.dataset,  "CaptionFace")        
+        os.makedirs(save_dir, exist_ok=True)
 
-        name = 'fusion_%s_%s_%d.pth' % (args.fusion_type,
-                                        args.model_type, 
-                                        self.args.current_epoch )
+        name = 'image_%s_%s_%s_%d1.pth' % (self.args.model_type, 
+                                          self.args.en_type, 
+                                          self.args.fusion_type, 
+                                          self.args.current_epoch)
         state_path = os.path.join(save_dir, name)
 
         state = {'net': self.fusion_net.state_dict(), 
@@ -102,8 +79,9 @@ class Train:
             'head': self.text_head.state_dict()
         }
 
-        torch.save(checkpoint_text_en, '%s/encoder_%s_%s_%d.pth' % 
-                    (save_dir, args.en_type, args.fusion_type, self.args.current_epoch ))
+        torch.save(checkpoint_text_en, '%s/text_%s_%s_%s_%d1.pth' % 
+                    (save_dir, self.args.model_type,self.args.en_type, 
+                               self.args.fusion_type, self.args.current_epoch))
 
 
     def print_losses(self, s_total_loss, w_total_loss, 
@@ -122,93 +100,57 @@ class Train:
             print("Clip loss: {:5.6f} ".format(total_cl_loss / total_length))
 
         if self.args.is_CMP == True: 
-            print("CMP Mloss: {:5.6f} ".format(total_cmp_loss / total_length))
-
-        if self.args.is_ident_loss == True: 
-            print("Identity loss: {:5.6f} ".format(total_idn_loss / total_length))
+            print("CMP Mloss: {:5.6f} ".format(total_cmp_loss / total_length))            
 
         if self.args.is_attr_loss == True: 
             print("Attribute loss: {:5.6f} ".format(total_attr_loss / total_length))
 
-        if self.args.is_ITC == True: 
+        if self.args.is_itc == True: 
             print("ITC loss: {:5.6f} ".format(total_itc_loss / total_length))
 
         if self.args.is_KD == True: 
             print("KD loss: {:5.6f} ".format(total_kd_loss)) # / total_length
 
+        print("Identity loss: {:5.6f} ".format(total_idn_loss / total_length))
         print("Fusion loss: {:5.6f} ".format(f_loss / total_length))
 
 
     def build_image_encoders(self):
         if self.model_type == "arcface":
-            self.image_encoder = prepare_arcface(self.args, train_mode="my_own")
+            self.image_encoder = prepare_arcface(self.args, train_mode="fixed")
 
         elif self.model_type == "adaface":
             self.image_encoder = prepare_adaface(self.args, train_mode="fixed")
         
-        self.image_head = ImageHeading(self.args)
-        self.image_head = nn.DataParallel(self.image_head, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
+        self.image_head = ImageHeading(self.args).to(my_device)
             
  
     def build_text_encoders(self):
-        self.text_encoder = TextEncoder(self.args)
-        self.text_encoder = nn.DataParallel(self.text_encoder, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
+        self.text_encoder = TextEncoder(self.args).to(my_device)
+        self.text_head = TextHeading(self.args).to(my_device)
         
-        self.text_head = TextHeading(self.args)
-        self.text_head = nn.DataParallel(self.text_head, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
-
-        
-        self.image_text_attr = metrics.Classifier(
+        self.image_text_attr = metrics.TopLayer(
                                 self.args.gl_text_dim, 
-                                40)
-    
-        self.image_text_attr = torch.nn.DataParallel(
-                                self.image_text_attr, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
+                                40).to(my_device)
         
-        self.image_text_cls = metrics.Classifier(
+        self.image_text_cls = metrics.TopLayer(
                                 self.args.gl_img_dim, 
-                                self.args.num_classes)
-        
-        self.image_text_cls = torch.nn.DataParallel(
-                                self.image_text_cls, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
-
-
-        """
-        self.text_cls = metrics.Classifier(
-                                self.args.gl_text_dim, 
-                                self.args.num_classes)
-        
-        self.text_cls = torch.nn.DataParallel(
-                                self.text_cls, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
-        """
+                                self.args.num_classes).to(my_device)
 
 
     def build_fusion_net(self):
         if self.args.fusion_type == "linear":
-            self.fusion_net = LinearFusion(self.args)
+            self.fusion_net = LinearFusion(self.args).to(my_device)
 
         elif self.args.fusion_type == "CMF": 
-            self.fusion_net = CMF(args)
+            self.fusion_net = CMF(args).to(my_device)
 
         elif self.args.fusion_type == "fcfm": 
-            self.fusion_net = FCFM(args.gl_img_dim)
+            self.fusion_net = FCFM(args.gl_img_dim).to(my_device)
 
-
-        self.fusion_net = torch.nn.DataParallel(self.fusion_net, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
-
-        self.metric_fc = metrics.Classifier(self.args.fusion_final_dim, 
-                        self.args.num_classes)
+        self.metric_fc = metrics.TopLayer(self.args.fusion_final_dim, 
+                        self.args.num_classes).to(my_device)
         
-        self.metric_fc = torch.nn.DataParallel(self.metric_fc, 
-                                device_ids=self.args.gpu_id).to(self.args.device)
-
 
     def get_optimizer(self):
         if self.args.is_CMP == True:
@@ -216,10 +158,9 @@ class Train:
                 {"params": itertools.chain(self.text_head.parameters(),
                                         self.image_head.parameters(),
                                         self.image_text_cls.parameters(),
-                                        #self.text_cls.parameters(),
                                         self.image_text_attr.parameters(),
                                         self.cmpm_loss.parameters()),
-                "lr": self.args.lr_head} 
+                "lr": 0.001} 
 
             ]
         elif self.args.is_CMP == False:
@@ -227,41 +168,39 @@ class Train:
                 {"params": itertools.chain(self.text_head.parameters(),
                                         self.image_head.parameters(),
                                         self.image_text_cls.parameters(),
-                                        #self.text_cls.parameters(),
                                         self.image_text_attr.parameters()),
 
-                "lr": self.args.lr_head}
+                "lr": 0.002}
             ] 
 
         params_fusion = [
             {"params": itertools.chain(self.metric_fc.parameters(),
                                         self.fusion_net.parameters()),
-                "lr": self.args.lr_head}
+                "lr": 0.002}
             ]
         self.optimizer = torch.optim.AdamW(self.text_encoder.parameters(),
                                 eps=1e-8,
                                 lr=self.args.min_lr_bert)
         
-        self.optimizer_align = torch.optim.Adam(params_align) #betas=(0.5, 0.999) 
-
-        self.optimizer_fusion = torch.optim.Adam(params_fusion) #betas=(0.5, 0.999) 
+        self.optimizer_align = torch.optim.Adam(params_align)  
+        self.optimizer_fusion = torch.optim.Adam(params_fusion) 
 
         self.lr_scheduler = get_linear_schedule_with_warmup(self.optimizer,
                                 num_warmup_steps= int(self.total_steps * 0.01), #1% of total training
                                 num_training_steps=self.total_steps)
 
-        self.lr_scheduler_align = torch.optim.lr_scheduler.ExponentialLR(
+        self.lrs_align = torch.optim.lr_scheduler.ExponentialLR(
                                         self.optimizer_align, 
                                         gamma=0.97)
         
-        self.lr_scheduler_fusion = torch.optim.lr_scheduler.ExponentialLR(
+        self.lrs_fusion = torch.optim.lr_scheduler.ExponentialLR(
                                         self.optimizer_fusion, 
                                         gamma=0.97)
 
 
     def get_identity_loss(self, sent_emb, img_features, class_ids):
         criterion = torch.nn.CrossEntropyLoss(reduction="mean")
-        class_ids = class_ids.to(self.args.device)
+        class_ids = class_ids.to(my_device)
 
         # for text branch
         output = self.image_text_cls(sent_emb)
@@ -271,16 +210,16 @@ class Train:
         output = self.image_text_cls(img_features)
         iid_loss = criterion(output, class_ids)
 
-        total_idn_loss = self.args.lambda_id * (tid_loss + iid_loss) / 2
-        self.idn_loss += total_idn_loss.item() 
-        return total_idn_loss
+        loss = self.args.lambda_id * (tid_loss + iid_loss) / 2
+        self.idn_loss += loss.item() 
+        return loss
     
 
     def get_cap_attr_loss(self, sent_emb, img_features, cap_attr, attr_vec):
         bce_loss = torch.nn.BCEWithLogitsLoss(reduction="mean")
         criterion = torch.nn.BCEWithLogitsLoss(reduction="mean")
-        cap_attr = cap_attr.to(self.args.device)
-        attr_vec = attr_vec.to(self.args.device)
+        cap_attr = cap_attr.to(my_device)
+        attr_vec = attr_vec.to(my_device)
 
         cap_attr.requires_grad_()
         attr_vec.requires_grad_()
@@ -333,7 +272,7 @@ class Train:
 
 
     def get_CMP_loss(self, sent_emb, img_features, class_ids):    
-        class_ids = class_ids.to(self.args.device)
+        class_ids = class_ids.to(my_device)
         total_cmp_loss, _ = self.cmpm_loss(sent_emb, img_features, class_ids)
         self.cmp_loss += self.args.lambda_cmp *  total_cmp_loss.item()
         return self.args.lambda_cmp * total_cmp_loss 
@@ -353,34 +292,27 @@ class Train:
 
     def prepare_labels(self, batch_size):
         match_labels = Variable(torch.LongTensor(range(batch_size)))
-        return match_labels.to(self.args.device)
+        return match_labels.to(my_device)
 
 
-    def get_fusion_loss(self, sent_emb, words_emb, global_feats, local_feats, class_ids):
-        label = class_ids.to(self.args.device)
-        criterion = losses.FocalLoss(gamma=2) #torch.nn.CrossEntropyLoss() 
+    def get_fusion_loss(self, local_feats, words_emb, global_feats, sent_emb, gl_img, class_ids):
+        fusion_loss = losses.FocalLoss(gamma=2) #torch.nn.CrossEntropyLoss() 
 
-        if self.args.fusion_type == "linear":
-            output = self.fusion_net(local_feats, global_feats, sent_emb)
-
-        elif self.args.fusion_type == "fcfm":
-            output = self.fusion_net(local_feats, words_emb, global_feats, sent_emb)
-
-        elif self.args.fusion_type == "CMF":
-            output = self.fusion_net(local_feats, words_emb, global_feats, sent_emb)
-
-        output = self.metric_fc(output)      
-        total_fusion_loss = args.lambda_f * criterion(output, label)
-        self.f_loss += total_fusion_loss.item() 
-
-        return total_fusion_loss     
+        output = self.fusion_net(local_feats, words_emb, global_feats, sent_emb)
+        gl_img = F.normalize(gl_img, p=2, dim=1)
+        output = F.normalize(output, p=2, dim=1)
+        output = torch.cat((gl_img, output), dim=1)
+        output = self.metric_fc(output)
+  
+        loss = (args.lambda_f * fusion_loss(output, class_ids.to(my_device)))
+        self.f_loss += loss.item() 
+        return loss   
 
 
-    def train(self):
+    def train_epoch(self):
         self.text_encoder.train()
         self.text_head.train() 
         self.image_text_cls.train()
-        #self.text_cls.train()
         self.image_text_attr.train()
         self.image_head.train()
         self.fusion_net.train()
@@ -407,11 +339,11 @@ class Train:
             words_emb, sent_emb = encode_Bert_tokens(self.text_encoder, self.text_head, caps, masks, self.args)
 
             if self.model_type == "adaface":
-                gl_img_features, words_features, norm = self.image_encoder(imgs)
+                gl_img, local_img, norm = self.image_encoder(imgs.to(my_device))
             else:
-                gl_img_features, words_features = self.image_encoder(imgs)
+                gl_img, local_img = self.image_encoder(imgs.to(my_device))
 
-            img_features, words_features = self.image_head(gl_img_features, words_features)
+            img_features, local_features = self.image_head(gl_img, local_img)
             
             self.optimizer.zero_grad()
             self.optimizer_align.zero_grad()
@@ -419,11 +351,7 @@ class Train:
             total_loss = 0
             
             if self.args.is_DAMSM == True:
-                 total_loss += self.get_DAMSM_loss(sent_emb, words_emb, img_features, words_features, class_ids)
-
-
-            if self.args.is_ident_loss == True: 
-                total_loss += self.get_identity_loss(sent_emb, img_features, class_ids)
+                 total_loss += self.get_DAMSM_loss(sent_emb, words_emb, img_features, local_features, class_ids)
 
             if self.args.is_attr_loss == True: 
                 total_loss += self.get_cap_attr_loss(sent_emb, img_features, cap_attr, attr_vec)
@@ -435,19 +363,20 @@ class Train:
             if self.args.is_CMP == True: 
                 total_loss += self.get_CMP_loss(sent_emb, img_features, class_ids)
 
-            if self.args.is_ITC == True:
+            if self.args.is_itc == True:
                 total_loss += self.get_itc_loss(sent_emb, img_features, self.logit_scale)
 
             if self.args.is_KD == True:
                 total_loss += self.get_CPA(sent_emb, img_features)
 
-            # fusion loss
-            total_loss += self.get_fusion_loss(sent_emb, words_emb, img_features, words_features, class_ids) #img_features
+            # fusion & identity loss
+            total_loss += self.get_identity_loss(sent_emb, img_features, class_ids)
+            total_loss += self.get_fusion_loss(local_features, words_emb, 
+                                               img_features, sent_emb, gl_img, class_ids) 
             
-
             # update
             total_loss.backward()
-            self.optimizer.step()
+            if (epoch > self.args.freeze): self.optimizer.step()
             self.optimizer_align.step()
             self.optimizer_fusion.step()
 
@@ -459,57 +388,171 @@ class Train:
             loop.update(1)
             loop.set_description(f'Training Epoch [{epoch}/{self.args.max_epoch}]')
             loop.set_postfix()
-             
         
         loop.close()
         self.print_losses(self.s_loss, self.w_loss, self.cl_loss, self.cmp_loss, 
                 self.idn_loss, self.attr_loss, self.itc_loss, self.kd_loss, self.f_loss, total_length)
-  
-        
-    def main(self):
-        for epoch in range(self.start_epoch, self.args.max_epoch + 1):
+       
+
+    def train(self):
+        for epoch in range(0, self.args.max_epoch):
             self.args.current_epoch = epoch
 
-            self.train()
-       
-            self.lr_scheduler.step()
-            self.lr_scheduler_align.step()
-            self.lr_scheduler_fusion.step()
+            self.train_epoch()
+            if (epoch > self.args.freeze): self.lr_scheduler.step()
+            self.lrs_align.step()
+            self.lrs_fusion.step()
 
-            if epoch % self.args.save_interval==0:
+            if epoch > self.args.save_interval:
                 print("saving image, text encoder, and fusion block\n")
                 self.save_models()
             
-            if (epoch > 6):
-                if ((self.args.do_test == True) and 
-                        (epoch % self.args.test_interval == 0 and epoch !=0)):
-                    print("\nLet's validate the model")
-                    test(self.valid_dl, 
-                        self.image_encoder, self.image_head, self.image_text_attr,
-                        self.fusion_net, 
-                        self.text_encoder, self.text_head, 
-                        self.args)
+            if epoch > self.args.test_interval:
+                print("\nLet's validate the model")
+                test(self.valid_dl, 
+                    self.image_encoder, self.image_head, self.image_text_attr,
+                    self.fusion_net, 
+                    self.text_encoder, self.text_head, 
+                    self.args)
+
+face2text_cfg = SimpleNamespace(
+    data_dir = "./data/face2text",  
+    test_ver_acc_list= "./data/face2text/images/test_ver_acc.txt",
+    num_classes = 4500,
+    bert_words_num = 40, 
+    captions_per_image = 4,
+    test_sub = 1193 
+)
+
+
+celeba_cfg = SimpleNamespace(
+    data_dir= "./data/celeba",  
+    test_ver_acc_list= "./data/celeba/images/test_ver_acc.txt",
+    num_classes= 4500, 
+    bert_words_num = 32,
+    captions_per_image= 10,
+    test_sub = 1217
+)
+
+
+celeba_dialog_cfg = SimpleNamespace(
+    data_dir= "./data/celeba_dialog",  
+    test_ver_acc_list= "./data/celeba_dialog/images/test_ver_acc.txt",
+    num_classes= 8000, 
+    bert_words_num = 32,
+    captions_per_image = 1,
+    test_sub = 1677
+)
+
+
+setup_cfg = SimpleNamespace(
+    weights_adaface_18 = "./weights/pretrained/adaface_ir18_webface4m.ckpt",
+    weights_arcface_18 = "./weights/pretrained/arcface_ir18_ms1mv3.pth", 
+
+    metric = "arc_margin", 
+    easy_margin = False,
+    loss = "focal_loss", 
+    use_se = False,
+    manual_seed = 61,
+    num_workers = 4,   
+
+    en_type = "BERT",        
+    embedding_dim = 256,
+    gl_img_dim = 256,
+    gl_text_dim = 256,
+    bert_type = "bert",
+
+    bert_config=  "bert-base-uncased",
+    align_config= "kakaobrain/align-base",
+    blip_config= "Salesforce/blip-image-captioning-base",
+    falva_config= "facebook/flava-full",
+    is_CLIP = False ,
+    is_CMP = False,
+    architecture = "ir_18",        
+
+    temperature = 2.0,
+    GAMMA1 = 4.0,  
+    GAMMA2 = 5.0,
+    GAMMA3 = 10.0,
+
+    clip_max_norm = 1.0,
+    is_ident = False,
+    split = "train"
+)
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--printing_attr',   dest="printing_attr",  help='perform test',     action='store_true')
+    parser.set_defaults(do_test=True)
+    parser.set_defaults(printing_attr=False)
+
+    parser.add_argument('--is_itc',         dest="is_itc",        help='including image-text cls. loss',     action='store_true')
+    parser.add_argument('--is_KD',          dest="is_KD",         help='including knowledge dist. loss',     action='store_true')
+    parser.add_argument('--is_attr_loss',   dest="is_attr_loss",  help='including attribute loss',           action='store_true')
+    parser.add_argument('--is_DAMSM',       dest="is_DAMSM",      help='including DAMSM loss',               action='store_true')
+    parser.set_defaults(is_itc=False)
+    parser.set_defaults(is_DAMSM=False)
+    parser.set_defaults(is_KD=False)
+    parser.set_defaults(is_attr_loss=False)
+
+    parser.add_argument('--dataset',       type=str,   default="celeba",                help='Name of the datasets celeba | face2text | celeba_dialog')
+    parser.add_argument('--batch_size',    type=int,   default=16,                       help='Batch size')
+    parser.add_argument('--max_epoch',     type=int,   default=22,                      help='Maximum epochs')
+    parser.add_argument('--model_type',    type=str,   default="arcface",               help='architecture of the model: arcface | adaface')
+    parser.add_argument('--test_file',     type=str,   default="test_ver.txt",          help='Name of the test list file')
+    parser.add_argument('--valid_file',    type=str,   default="valid_ver.txt",         help='Name of the test list file')
+
+    parser.add_argument('--fusion_final_dim',   type=int,   default=576,     help='Final fusion dimension')
+    parser.add_argument('--freeze',             type=int,   default=4,      help='Number of epoch pretrained model frezees')
+    parser.add_argument('--fusion_type',        type=str,   default="CMF",  help='Type of Fusion block CMF|linear')
+    
+    parser.add_argument('--checkpoint_path',    type=str,   default="./checkpoints", help='checkpoints directory')
+    parser.add_argument('--weights_path',       type=str,   default="./weights/pretrained", help='pretrained model directory')
+
+    parser.add_argument('--lambda_f',       type=float,   default=2,    help='weight value of the fusion loss')
+    parser.add_argument('--lambda_itc',     type=float,   default=1,    help='weight value of the ITC loss')
+    parser.add_argument('--lambda_cmp',     type=float,   default=1,    help='weight value of the identity loss')
+    parser.add_argument('--lambda_kd',      type=float,   default=0.1,   help='weight value of the KD loss')
+    parser.add_argument('--lambda_attr',    type=float,   default=12,   help='weight value of the attribute loss')
+    parser.add_argument('--lambda_clip',    type=float,   default=1,   help='weight value of the KD loss')
+    parser.add_argument('--lambda_id',      type=float,   default=1,   help='weight value of the attribute loss')
+
+    parser.add_argument('--save_interval',     type=int,   default=6,    help='saving intervals (epochs)')
+    parser.add_argument('--test_interval',     type=int,   default=6,    help='tester intervals (epochs)')
+    parser.add_argument('--min_lr_bert',       type=float,  default=0.00002,    help='minimum learning rate for bert optimization')
+    return  parser.parse_args(argv)
 
 
 if __name__ == "__main__":
-    file_args = merge_args_yaml(parse_args())
-    args = SimpleNamespace(**file_args.__dict__, **setup_cfg.__dict__)
+    c_args = parse_arguments(sys.argv[1:])
 
-    if args.dataset_name == "face2text": 
-        args =  SimpleNamespace(**face2text_cfg.__dict__, **args.__dict__)
-    
-    elif args.dataset_name == "celeba":
-        args =  SimpleNamespace(**celeba_cfg.__dict__, **args.__dict__)
-    
-    elif args.dataset_name == "celeba_dialog":
-        args  = SimpleNamespace(**celeba_dialog_cfg.__dict__, **args.__dict__)
-    else:
-        print("Error: New Dataset !!, dataset doesn't have config file!!")
+    if c_args.dataset == "celeba":
+        args = SimpleNamespace(**c_args.__dict__, **setup_cfg.__dict__, **celeba_cfg.__dict__)
 
+    elif c_args.dataset == "face2text":
+        args = SimpleNamespace(**c_args.__dict__, **setup_cfg.__dict__, **face2text_cfg.__dict__)
+    
+    elif c_args.dataset == "celeba_dialog":
+        args = SimpleNamespace(**c_args.__dict__, **setup_cfg.__dict__, **celeba_dialog_cfg.__dict__)
+
+    print("************* Dataset Name : ", args.dataset)
     # set seed
     random.seed(args.manual_seed)
     np.random.seed(args.manual_seed)
     torch.manual_seed(args.manual_seed)
 
     torch.cuda.manual_seed_all(args.manual_seed)
-    Train(args).main()
+    args.data_dir = os.path.join("./data", args.dataset)
+    args.test_ver_list = os.path.join(args.data_dir, "images", args.test_file)
+    args.valid_ver_list = os.path.join(args.data_dir, "images", args.valid_file)
+    #pprint.pp(args)
+    
+    t = Trainer(args)
+    print("start training ...")
+    t.train()
+
+"""
+RUN THE CODE
+python3 src/test_tgfr.py  --model_type adaface --dataset celeba
+"""

@@ -11,10 +11,9 @@ from utils.dataset_utils import *
 class TrainDataset(data.Dataset):
     def __init__(self, filenames, captions, att_masks, attr_label, split="train", args=None):
 
-        print("\n############## Loading %s dataset ################" % split)
         self.captions_per_image = args.captions_per_image
         self.data_dir = args.data_dir
-        self.dataset_name = args.dataset_name
+        self.dataset = args.dataset
         self.en_type = args.en_type
         self.model_type = args.model_type
         self.split = split 
@@ -74,7 +73,7 @@ class TrainDataset(data.Dataset):
         attr_vec = self.get_attr_vector(attr_file)
 
         # random select a sentence
-        sent_ix = random.randint(0, self.captions_per_image)
+        sent_ix = random.randint(0, self.captions_per_image - 1)
         new_sent_ix = index * self.captions_per_image + sent_ix
 
         caps, mask = self.captions[new_sent_ix], self.att_masks[new_sent_ix]

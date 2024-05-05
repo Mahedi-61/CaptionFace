@@ -2,24 +2,20 @@ import torch
 from utils.train_dataset import TrainDataset
 from utils.test_dataset import TestDataset 
 
-from utils.utils import load_model_weights, load_fusion_net
+from utils.utils import load_model_weights
 from models.models import TextHeading, TextEncoder, ImageHeading
 from models.fusion_nets import (LinearFusion, FCFM, CMF)
 from models import iresnet, net 
 from models import metrics
-from models.network import NetworkBuilder
 from utils.dataset_utils import *
-
 
 ###########   model   ############
 def prepare_text_encoder(args):    
-    text_encoder =  TextEncoder(args)
-    text_encoder = torch.nn.DataParallel(text_encoder, device_ids=args.gpu_id).to(args.device)
+    text_encoder =  TextEncoder(args).to(args.device)
     state_dict = torch.load(args.text_encoder_path)
     text_encoder.load_state_dict(state_dict['model'])
 
-    text_head = TextHeading(args)
-    text_head = torch.nn.DataParallel(text_head, device_ids=args.gpu_id).to(args.device)
+    text_head = TextHeading(args).to(args.device)
     text_head.load_state_dict(state_dict['head'])
     del state_dict
 
@@ -28,10 +24,7 @@ def prepare_text_encoder(args):
 
 
 def prepare_image_head(args):
-    print("loading image encoder: ", args.image_encoder_path)
-    head = ImageHeading(args)
-
-    head = torch.nn.DataParallel(head, device_ids=args.gpu_id).to(args.device)
+    head = ImageHeading(args).to(args.device)
     state_dict = torch.load(args.image_encoder_path)
     head.load_state_dict(state_dict['image_head'])
     return head 
@@ -39,13 +32,10 @@ def prepare_image_head(args):
 
 def prepare_image_text_attr(args):
     print("loading image_text_attr: ", args.image_encoder_path)
-    image_text_attr = metrics.Classifier(args.gl_text_dim, 40)
-
-    image_text_attr = torch.nn.DataParallel(image_text_attr, device_ids=args.gpu_id).to(args.device)
+    image_text_attr = metrics.TopLayer(args.gl_text_dim, 40).to(args.device)
     state_dict = torch.load(args.image_encoder_path)
     image_text_attr.load_state_dict(state_dict['attr_head'])
     return image_text_attr 
-
 
     """
     unfreeze_layers = ['bn2', 'fc','features'] #'layer3.1', 'layer.4', 
@@ -66,14 +56,16 @@ def prepare_arcface(args, train_mode):
     elif args.architecture == "ir_50":
         model = iresnet.iresnet50(pretrained=False, progress=True)
         weights_path = args.weights_arcface_50
+
+    elif args.architecture == "ir_101":
+        model = iresnet.iresnet101(pretrained=False, progress=True)
+        weights_path = args.weights_arcface_101
     
     checkpoint = torch.load(weights_path)
     model.load_state_dict(checkpoint)
 
     model.to(device)
-    model = torch.nn.DataParallel(model, device_ids=args.gpu_id)
     print("loading pretrained arcface model: ", args.architecture)
-
 
     if train_mode == "my_own":
         state_dict = torch.load(args.backend_path)
@@ -96,8 +88,12 @@ def prepare_adaface(args, train_mode):
 
     if args.architecture == "ir_18":
         weights_path = args.weights_adaface_18
+        
     elif args.architecture == "ir_50":
         weights_path = args.weights_adaface_50
+
+    elif args.architecture == "ir_101":
+        weights_path = args.weights_adaface_101
 
     model = net.build_model(args.architecture) 
     statedict = torch.load(weights_path)['state_dict']
@@ -105,7 +101,6 @@ def prepare_adaface(args, train_mode):
     model.load_state_dict(model_statedict)
     
     model.to(device)
-    model = torch.nn.DataParallel(model, device_ids=args.gpu_id)
     print("loading pretrained adaface model:  ", args.architecture)
 
     if train_mode == "my_own":
@@ -123,39 +118,62 @@ def prepare_adaface(args, train_mode):
 
 
 
-#### model for MagFace 
-def prepare_magface(args):
+#### model for AdaFace 
+def prepare_magface(args, train_mode):
     device = args.device
-    resnet = NetworkBuilder(arch = "iresnet18")
-    resnet = torch.nn.DataParallel(resnet, device_ids=args.gpu_id).to(device)
 
-    mag_dict = torch.load(args.weights_magface)['state_dict']
-    del mag_dict["module.fc.weight"]
-    resnet.load_state_dict(mag_dict)
+    if args.architecture == "ir_50":
+        model = iresnet.iresnet50(pretrained=False, progress=True)
+        weights_path = args.weights_magface_50
+        mag_dict = torch.load(weights_path)
+        del mag_dict["state_dict"]["parallel_fc.weight"]
+
+    elif args.architecture == "ir_101":
+        model = iresnet.iresnet101(pretrained=False, progress=True)
+        weights_path = args.weights_magface_101
+        mag_dict = torch.load(weights_path)
+        del mag_dict["state_dict"]["fc.weight"]
+
     
-    for p in resnet.parameters():
-        p.requires_grad = False
-    resnet.eval()
-    print("loading pretrained magface model")
-    return resnet 
+    state_d = {}
+    for k, v in mag_dict["state_dict"].items():
+        state_d[k[16:]] = v
+
+    del mag_dict
+    
+    model.load_state_dict(state_d)
+    model.to(device)
+    #model = torch.nn.DataParallel(model, device_ids=args.gpu_id).to(device)
+    print("loading pretrained magface model:  ", args.architecture)
+
+    if train_mode == "my_own":
+        state_dict = torch.load(args.backend_path)
+        model.load_state_dict(state_dict['image_encoder'])
+        print("my own magface weight is loaded")
+
+    if train_mode == "fixed" or train_mode == "my_own":
+        for p in model.parameters():
+            p.requires_grad = False
+        model.eval()
+        print("******* Magface weights are fixed **********")
+
+    return model 
 
 
 def prepare_fusion_net(args):
-    # fusion models
     if args.fusion_type == "linear":
-        net = LinearFusion(args)
+        fusion_net = LinearFusion(args).to(args.device)
 
     elif args.fusion_type == "fcfm":
-        net = FCFM(channel_dim = args.gl_img_dim)
+        fusion_net = FCFM(channel_dim = args.gl_img_dim).to(args.device)
 
     elif args.fusion_type == "CMF":
-        net = CMF(args)
+        fusion_net = CMF(args).to(args.device)
 
-    net = torch.nn.DataParallel(net, device_ids=args.gpu_id).to(args.device)
-    print("loading checkpoint; epoch: ", args.image_encoder_path)
-    net = load_fusion_net(net, args.image_encoder_path) 
-    
-    return net
+    checkpoint = torch.load(args.image_encoder_path, map_location=torch.device('cpu'))
+    fusion_net = load_model_weights(fusion_net, checkpoint["net"])
+    return fusion_net 
+
 
 
 ############## dataloader #############

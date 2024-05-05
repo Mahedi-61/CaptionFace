@@ -8,6 +8,39 @@ from typing import Optional, Tuple
 from torchsummary import summary
 from types import SimpleNamespace
 
+class ScaledDotProductAttention(nn.Module):
+    """
+    Scaled Dot-Product Attention proposed in "Attention Is All You Need"
+    Compute the dot products of the query with all keys, divide each by sqrt(dim),
+    and apply a softmax function to obtain the weights on the values
+
+    Args: dim, mask
+        dim (int): dimention of attention
+        mask (torch.Tensor): tensor containing indices to be masked
+
+    Inputs: query, key, value, mask
+        - **query** (batch, q_len, d_model): tensor containing projection vector for decoder.
+        - **key** (batch, k_len, d_model): tensor containing projection vector for encoder.
+        - **value** (batch, v_len, d_model): tensor containing features of the encoded input sequence.
+        - **mask** (-): tensor containing indices to be masked
+
+    Returns: context, attn
+        - **context**: tensor containing the context vector from attention mechanism.
+        - **attn**: tensor containing the attention (alignment) from the encoder outputs.
+    """
+    def __init__(self, dim: int):
+        super(ScaledDotProductAttention, self).__init__()
+        self.sqrt_dim = np.sqrt(dim)
+
+    def forward(self, query: Tensor, key: Tensor, value: Tensor, mask: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+        score = torch.bmm(query, key.transpose(1, 2)) / self.sqrt_dim
+        if mask is not None:
+            score.masked_fill_(mask.view(score.size()), -float('Inf'))
+
+        attn = F.softmax(score, -1)
+        context = torch.bmm(attn, value)
+        return context, attn
+
 
 ############### Fusion ###################
 class LinearFusion1(nn.Module):
@@ -35,16 +68,14 @@ class LinearFusion1(nn.Module):
 class LinearFusion(nn.Module):
     def __init__(self, args):
         super(LinearFusion, self).__init__()
-        self.fc_out = nn.Linear(512, args.fusion_final_dim) # change 512, 576, 640, 704, 768
+        self.fc_out = nn.Linear(512, 64) # change 512, 576, 640, 704, 768, args.fusion_final_dim
         self.dropout = nn.Dropout(0.2)
-        #self.batchnorm = nn.BatchNorm1d(args.fusion_final_dim)
 
 
-    def forward(self, region, img_features, sent_emb):
-        concat_features =  torch.cat((img_features, sent_emb), dim=1)
+    def forward(self, local_feats, words_emb, global_feats, sent_emb):
+        concat_features =  torch.cat((global_feats, sent_emb), dim=1)
         x = self.fc_out(concat_features)
         self.dropout(x)
-        #x = self.batchnorm(x)
         return x
 
 
@@ -362,10 +393,9 @@ class CMF(nn.Module):
         self.dropout = nn.Dropout(self.mlp_dropout)
         dim = (num_tokens + channel_dim) * embed_dim  
         self.mlp_r = MLP(dim, r_out)
-        self.mlp_g = MLP(512, 512)
 
 
-    def forward(self, img, word, gl_img, sent):        
+    def forward(self, img, word, gl_img, sent):     
         img = self.relu(self.conv(img))
         img = self.bn_img(img)
         img = torch.reshape(img, (img.size(0), img.size(1), -1)) 
@@ -378,9 +408,9 @@ class CMF(nn.Module):
         img = torch.reshape(img, (img.size(0), -1))
         x = torch.cat((x, img), dim=-1)
         x = self.mlp_r(x) 
-        y = torch.cat((gl_img, sent), dim=1)
-
-        return torch.cat((x, y), dim=1)
+        return x 
+        #y = torch.cat((gl_img, sent), dim=1)
+        #return torch.cat((x, y), dim=1)
 
 
 

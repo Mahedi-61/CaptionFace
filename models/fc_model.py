@@ -1,9 +1,10 @@
 import torch.nn as nn
 import torch 
 import torch.nn.functional as F 
-from models import fc_iresnet as iresnet
-from timm import create_model, list_models 
-from transformers import GPT2LMHeadModel, GPT2TokenizerFast
+import numpy as np
+import os
+from models import iresnet
+from transformers import GPT2LMHeadModel
 import torch.nn.functional as F
 
 
@@ -140,15 +141,73 @@ class GPT2Block(nn.Module):
         return x
 
 
-def load_pretrained_arcface(weights_arcface):
-    model = iresnet.iresnet18(pretrained=False, progress=True)
+class SelfAttention(nn.Module):
+    def __init__(self, ):
+        super(SelfAttention, self).__init__()
+        self.scale_dim = 64
+        self.query_proj = nn.Linear(256, self.scale_dim)
+        self.key_proj =  nn.Linear(256, self.scale_dim)
+        self.value_proj =  nn.Linear(256, 256)
+        self.sqrt_dim = np.sqrt(self.scale_dim)
 
-    checkpoint = torch.load(weights_arcface)
+
+    def forward(self, x):
+        N, D = x.size()
+        C = D // 3
+        x = x.contiguous().view(N, 3, C)
+        query = self.query_proj(x) 
+        query = query.contiguous().view(N, self.scale_dim, 3) #N, Scale, HW
+
+        key = self.key_proj(x)
+        key = key.contiguous().view(N, self.scale_dim, 3)
+        key = key.transpose(2,1) #N, HW, Scale
+
+        # compute attention
+        attention = torch.bmm(key, query) / self.sqrt_dim 
+
+        assert attention.size() == (N, 3, 3)
+        attention = F.softmax(attention, dim=-1)
+
+        # g transform
+        value = self.value_proj(x) #x --> image
+        value = value.contiguous().view(N, C, -1)
+        value = value.transpose(2, 1) #N, HW, C
+        
+        # final response
+        response = torch.bmm(attention, value)
+        response = response.contiguous().view(N, -1)
+        return response
+    
+
+
+def load_pretrained_arcface(config):
+
+    if config.resnet_layer == 18:
+        model = iresnet.iresnet18(pretrained=False, progress=True)
+
+    elif config.resnet_layer == 50:
+        model = iresnet.iresnet50(pretrained=False, progress=True)
+
+    if config.arch == "arcface" and config.resnet_layer == 18:
+        weight = config.weight_arcface_18
+
+    elif config.arch == "arcface" and config.resnet_layer == 50:
+        weight = config.weight_arcface_50
+
+    elif config.arch == "adaface" and config.resnet_layer == 18:
+        weight = config.weight_adaface_18
+
+    elif config.arch == "adaface" and config.resnet_layer == 50:
+        weight = config.weight_adaface_50
+
+    weight_dir = os.path.join(config.weights_path, weight)
+    checkpoint = torch.load(weight_dir)
+    print("loading image encoder: ", weight_dir)
+
     model.load_state_dict(checkpoint)
     for p in model.parameters():
-        p.requires_grad = True
+        p.requires_grad = False 
 
-    print("loading pretrained arcface model")
     return model 
 
 
@@ -157,8 +216,9 @@ class VisionGPT2Model(nn.Module):
         super().__init__()
 
         self.config = config
-        self.arcface = load_pretrained_arcface(self.config.weights_arcface)
-        self.proj = nn.Linear(512, 768)
+        self.arcface = load_pretrained_arcface(self.config)
+        self.proj = nn.Linear(768, 768)
+        self.l_norm1 = nn.LayerNorm(768)
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size,config.embed_dim),
@@ -169,9 +229,13 @@ class VisionGPT2Model(nn.Module):
         ))
         self.lm_head = nn.Linear(config.embed_dim,config.vocab_size,bias=False)
         self.transformer.wte.weight = self.lm_head.weight
+
+        if self.config.is_sa:
+            self.sa = SelfAttention()
+            self.l_norm2 = nn.LayerNorm(768)
         
 
-    def pretrained_layers_trainable(self, trainable=False):  
+    def trainable_gpt_layers(self, trainable=False):  
         layers = [
             self.transformer.wte, self.transformer.wpe,
             self.transformer.ln_f, self.lm_head
@@ -184,7 +248,8 @@ class VisionGPT2Model(nn.Module):
         for l in gpt_layers:
             layers.extend(l)
         
-        unfreeze_layers = ['layer.1', 'layer.2','layer.3','conv1', 'bn1', 'bn2', 'dropout', 'fc', 'features']
+        unfreeze_layers = ['layer3', 'layer4', 'bn2', 'dropout', 'fc', 'features'] 
+
         for name, param in self.arcface.named_parameters():
             for ele in unfreeze_layers:
                 if ele in name:
@@ -197,27 +262,6 @@ class VisionGPT2Model(nn.Module):
             else:
                 layer.requires_grad = trainable
 
-
-        total_frozen_params = sum([p.numel() for p in self.parameters() if not p.requires_grad])
-        print(f'{total_frozen_params=}')
-        
-
-    def unfreeze_gpt_layers(self,):
-        gpt_layers = [[
-            self.transformer.h[i].ln_1, self.transformer.h[i].ln_2,
-            self.transformer.h[i].attn, self.transformer.h[i].mlp
-        ] for i in range(self.config.depth)]
-        flatten = []
-        for l in gpt_layers:
-            flatten.extend(l)
-            
-        for layer in flatten:
-            if not isinstance(layer,nn.Parameter):
-                for p in layer.parameters():
-                    p.requires_grad = True
-            else:
-                layer.requires_grad = True
-        
 
     @classmethod    
     def from_pretrained(self, config):
@@ -254,9 +298,19 @@ class VisionGPT2Model(nn.Module):
 
     def forward(self,image, input_ids, labels=None):
         
-        _, image = self.arcface(image)
+        gl_feats, lc_feats = self.arcface(image)
+        lc_feats = F.adaptive_avg_pool2d(lc_feats, (1, 1))
+        lc_feats = lc_feats.view(lc_feats.size(0), -1)
+
+        image = torch.concat((gl_feats, lc_feats), dim=1)
         image = self.proj(image)
-        image = F.normalize(image, p=2, dim=-1)
+        image = self.l_norm1(image) 
+
+        if self.config.is_sa:
+            x = self.sa(image)
+            image = self.l_norm2(image + x)
+
+        image = torch.unsqueeze(image, dim=1)
 
         token_embeddings = self.transformer.wte(input_ids) # batch x seq_len
         pos_embs = torch.arange(0,input_ids.size(1)).to(input_ids.device)
@@ -277,16 +331,20 @@ class VisionGPT2Model(nn.Module):
         return lm_logits
 
 
-    def generate(self,  image,  sequence,   max_tokens=48,  temperature=1.0, deterministic=False):
-        tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-        tokenizer.pad_token = tokenizer.eos_token
-
+    def generate(self,  
+                 image,  
+                 sequence, 
+                 tokenizer, 
+                 max_tokens=48,  
+                 temperature=1.0, 
+                 deterministic=False):
+        
         for _ in range(max_tokens):
             out = self(image, sequence)
             out = out[:,-1,:] / temperature
             probs = F.softmax(out, dim=-1)
             if deterministic:
-                next_token = torch.argmax(probs,dim=-1,keepdim=True)
+                next_token = torch.argmax(probs, dim=-1, keepdim=True)
             else:
                 next_token = torch.multinomial(probs,num_samples=1)
             sequence = torch.cat([sequence,next_token],dim=1)
@@ -301,19 +359,22 @@ class VisionGPT2Model(nn.Module):
 if __name__ == "__main__":
     from types import SimpleNamespace
 
-    model_config = SimpleNamespace(
-    vocab_size = 50_257,
-    embed_dim = 768,
-    num_heads = 12,
-    seq_len = 1024,
-    depth = 12,
-    attention_dropout = 0.1,
-    residual_dropout = 0.1,
-    mlp_ratio = 4,
-    mlp_dropout = 0.1,
-    emb_dropout = 0.1, 
-    weights_arcface = "./weights/pretrained/arcface_ir18_ms1mv3.pth")
+    config = SimpleNamespace(
+        vocab_size = 50_257,
+        embed_dim = 768,
+        num_heads = 12,
+        seq_len = 1024,
+        depth = 12,
+        attention_dropout = 0.1,
+        residual_dropout = 0.1,
+        mlp_ratio = 4,
+        arch = "arcface",
+        resnet_layer = 18,
+        mlp_dropout = 0.1,
+        emb_dropout = 0.1, 
+        weights_path = "./weights/pretrained",
+        weight_arcface_18 = "arcface_ir18_ms1mv3.pth")
 
-    arcface = load_pretrained_arcface("./weights/pretrained/arcface_ir18_ms1mv3.pth")
+    arcface = load_pretrained_arcface(config)
     for name, m in arcface.named_modules():
         print(name) 

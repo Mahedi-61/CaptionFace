@@ -6,29 +6,17 @@ import torch.nn as nn
 from torch import Tensor
 
 
-__all__ = [
-    "ResNet",
-    "ResNet18_Weights",
-    "ResNet34_Weights",
-    "ResNet50_Weights",
-    "ResNet101_Weights",
-    "ResNet152_Weights",
-    "ResNeXt50_32X4D_Weights",
-    "ResNeXt101_32X8D_Weights",
-    "ResNeXt101_64X4D_Weights",
-    "Wide_ResNet50_2_Weights",
-    "Wide_ResNet101_2_Weights",
-    "resnet18",
-    "resnet34",
-    "resnet50",
-    "resnet101",
-    "resnet152",
-    "resnext50_32x4d",
-    "resnext101_32x8d",
-    "resnext101_64x4d",
-    "wide_resnet50_2",
-    "wide_resnet101_2",
-]
+class TopLayer(nn.Module):  
+    def __init__(self, input_dim, num_classes):
+        super().__init__()
+        self.flatten = nn.Flatten()
+        self._dropout = nn.Dropout(p = 0.2)
+        self._fc = nn.Linear(input_dim, num_classes)
+
+    def forward(self, x):
+        x = self.flatten(x)
+        return self._fc(self._dropout(x))
+
 
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
@@ -224,6 +212,7 @@ class ResNet(nn.Module):
         stride: int = 1,
         dilate: bool = False,
     ) -> nn.Sequential:
+        
         norm_layer = self._norm_layer
         downsample = None
         previous_dilation = self.dilation
@@ -267,8 +256,9 @@ class ResNet(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.layer4(x)
         local_feat = x 
+        x = self.layer4(x)
+        
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         #x = self.fc(x)
@@ -284,8 +274,7 @@ def _resnet(
     layers,
     weights,
     progress,
-    **kwargs: Any,
-) -> ResNet:
+    **kwargs: Any) -> ResNet:
 
     model = ResNet(block, layers, **kwargs)
     if weights is not None:
@@ -294,23 +283,24 @@ def _resnet(
     return model
 
 
-def resnet18(progress=True, **kwargs: Any) -> ResNet:
-    loading_dir = os.path.join("./weights/pretrained", "resnet18.pth")
-    weights = torch.load(loading_dir)
-    return _resnet(BasicBlock, [2, 2, 2, 2], weights, progress, **kwargs)
+def get_resnet_model(config, progress=True, **kwargs):
 
+    model_file = os.path.join(config.weights_path, "resnet%d.pth" % config.resnet_layer)
+    weights = torch.load(model_file)
 
+    if config.resnet_layer == 18:
+        return _resnet(BasicBlock, [2, 2, 2, 2], weights, progress, **kwargs)
 
-def resnet50(progress=True, **kwargs: Any) -> ResNet:
-    loading_dir = os.path.join("./weights/pretrained", "resnet50.pth")
-    weights = torch.load(loading_dir)
-    return _resnet(Bottleneck, [3, 4, 6, 3], weights, progress, **kwargs)
-
-
+    elif config.resnet_layer == 50:
+        return _resnet(Bottleneck, [3, 4, 6, 3], weights, progress, **kwargs)
 
 
 if __name__ == "__main__":
+    from types import SimpleNamespace
+    config = SimpleNamespace()
+    config.resnet_layer = 50
+    config.weights_path = "./weights/fgic"
     x = torch.randn((16, 3, 224, 224))
-    gl_feat, local_feat = resnet50() (x)
+    gl_feat, local_feat = get_resnet_model(config, progress=True) (x)
     print(gl_feat.size())
     print(local_feat.size())

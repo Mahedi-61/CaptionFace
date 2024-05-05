@@ -1,0 +1,69 @@
+#### configuration and directory
+dataset_name: cub
+checkpoints_path: ./checkpoints
+#backend_path: ./weights/finetuned/adaface_celeba.pth
+
+data_dir: ./data/cub  
+train_imgs_list: ./data/cub/train_images_shuffle.txt
+test_imgs_list: ./data/cub/test_images_shuffle.txt
+text_encoder_path: "./checkpoints/celeba/BERT_arcface_ir_18/linear/encoder_BERT_linear_22.pth"
+image_encoder_path: "./checkpoints/celeba/BERT_arcface_ir_18/linear/fusion_linear_arcface_22.pth"
+
+num_classes: 200
+bert_words_num: 32
+captions_per_image: 10
+
+# losses
+is_DAMSM: False            
+is_KD: False
+is_ident_loss: True        
+
+# encoder
+TRAIN:
+    FLAG: True
+    SMOOTH:
+        GAMMA1: 4.0  
+        GAMMA2: 5.0
+        GAMMA3: 10.0
+lambda_kd: 0.1
+lambda_id:  1
+lambda_f: 3
+
+min_lr_bert: 0.00002 
+lr_head: 0.0009
+clip_max_norm: 1.0
+
+en_type: BERT        
+embedding_dim: 256
+bert_type: bert 
+bert_config: bert-base-uncased
+printing_attr: False  
+
+# model arch 
+img_size: 112 
+model_type: resnet18 
+test_model: resnet18_cub.pth
+fusion_type: linear
+ch_size: 3           
+
+#trainng settings
+manual_seed: 61
+batch_size: 8
+max_epoch: 20 
+valid_interval: 1
+save_interval: 1
+lr_model: 0.0001
+lr_cls: 0.001
+hold: 6 
+       
+# flags
+only_image: False   
+is_roc: False
+mode: test  
+
+# fusion arch
+fusion_type: linear
+is_ident: False
+fusion_final_dim: 512   
+gl_img_dim: 256
+gl_text_dim: 256
