@@ -43,28 +43,6 @@ class ScaledDotProductAttention(nn.Module):
 
 
 ############### Fusion ###################
-class LinearFusion1(nn.Module):
-    def __init__(self, args):
-        super(LinearFusion1, self).__init__()
-        self.conv = nn.Conv2d(256, 36, kernel_size=(3, 3), bias=False, stride=2, padding="valid")
-        self.relu = nn.ReLU()
-        self.fc_out = nn.Linear(548, args.fusion_final_dim) # change 512, 576, 640, 704, 768
-        self.dropout = nn.Dropout(0.2)
-        #self.maxpool = nn.MaxPool2d(kernel_size=2)
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-
-
-    def forward(self, region, img_features, sent_emb):
-        img = self.avg_pool(self.relu(self.conv(region)))
-        img = img.view(img.size(0), -1)
-        img = F.normalize(img, p=2, dim=1)
-    
-        concat_features =  torch.cat((img, img_features, sent_emb), dim=1)
-        x = self.fc_out(concat_features)
-        x = self.dropout(x)
-        return x
-
-
 class LinearFusion(nn.Module):
     def __init__(self, args):
         super(LinearFusion, self).__init__()
@@ -222,20 +200,6 @@ class ParagraphLevelCFA(nn.Module):
         self.ln(sent_feats)
         return sent_feats  
 
-
-class ConcatAttention(nn.Module):
-    def __init__(self):
-        super(ConcatAttention, self).__init__()
-        self.mha = torch.nn.MultiheadAttention(embed_dim=256, num_heads = 1, dropout=0.2, batch_first=True)
-        self.linear = torch.nn.Linear(768, 512)
-
-    def forward(self, img: Tensor, sent_emb: Tensor) -> Tensor:
-        bs = img.size(0) 
-        patch = torch.cat((img, sent_emb), dim = 1)
-        patch = patch.contiguous().view(bs, 3, 256)
-        patch = self.mha(patch, patch, patch)
-        patch = patch[0].contiguous().view(bs, -1) 
-        return self.linear(patch) 
 
 
 class GPT2Attention(nn.Module):
@@ -395,15 +359,15 @@ class CMF(nn.Module):
         self.mlp_r = MLP(dim, r_out)
 
 
-    def forward(self, img, word, gl_img, sent):     
-        img = self.relu(self.conv(img))
+    def forward(self, local_feats, word_emb, global_feats, sent_emb):     
+        img = self.relu(self.conv(local_feats))
         img = self.bn_img(img)
         img = torch.reshape(img, (img.size(0), img.size(1), -1)) 
 
-        word = self.word_projection(word.transpose(1, 2)) 
-        word = self.bn_word(word)
+        word_emb = self.word_projection(word_emb.transpose(1, 2)) 
+        word_emb = self.bn_word(word_emb)
 
-        x = self.block(img, word)
+        x = self.block(img, word_emb)
         x = torch.reshape(x, (x.size(0), -1))
         img = torch.reshape(img, (img.size(0), -1))
         x = torch.cat((x, img), dim=-1)
@@ -411,7 +375,52 @@ class CMF(nn.Module):
         return x 
         #y = torch.cat((gl_img, sent), dim=1)
         #return torch.cat((x, y), dim=1)
+            #gl_img = F.normalize(gl_img, p=2, dim=1)
+        #output = F.normalize(output, p=2, dim=1)
+        #output = torch.cat((gl_img, output), dim=1)
 
+
+class CMF_FR(nn.Module):
+    def __init__(self, args):
+        super(CMF_FR, self).__init__()
+        embed_dim = 36
+        channel_dim = 30 #48, 64, 144, 196, 256
+        num_tokens = args.bert_words_num - 2
+        self.mlp_dropout = 0.3
+        r_out = 64
+
+        self.bn_img = nn.BatchNorm2d(channel_dim)
+        self.bn_word = nn.BatchNorm1d(num_tokens)
+
+        self.word_projection = nn.Linear(256, embed_dim)
+        self.conv = nn.Conv2d(256, channel_dim, kernel_size=(3, 3), bias=False, stride=2, padding="valid")
+        self.relu = nn.ReLU()
+        self.block = GPT2Block(channel_dim, num_tokens, embed_dim)
+
+        self.dropout = nn.Dropout(self.mlp_dropout)
+        dim = (num_tokens + channel_dim) * embed_dim  
+        self.mlp_r = MLP(dim, r_out)
+        self.fusion_final = nn.Linear(args.fusion_final_dim, 512)
+
+
+    def forward(self, local_feats, word_emb, global_feats, sent_emb, gl_img):     
+        img = self.relu(self.conv(local_feats))
+        img = self.bn_img(img)
+        img = torch.reshape(img, (img.size(0), img.size(1), -1)) 
+
+        word_emb = self.word_projection(word_emb.transpose(1, 2)) 
+        word_emb = self.bn_word(word_emb)
+
+        x = self.block(img, word_emb)
+        x = torch.reshape(x, (x.size(0), -1))
+        img = torch.reshape(img, (img.size(0), -1))
+        x = torch.cat((x, img), dim=-1)
+        x = self.mlp_r(x) 
+
+        gl_img = F.normalize(gl_img, p=2, dim=1)
+        x = F.normalize(x, p=2, dim=1)
+        output = torch.cat((gl_img, x), dim=1)
+        return self.fusion_final(output)
 
 
 if __name__ == "__main__":

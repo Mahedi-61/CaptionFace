@@ -67,13 +67,13 @@ class Trainer:
 
     def load_all_models(self):
         print("loading all models")
-        state_dict = torch.load(os.path.join(self.config.model_path, self.config.image_encoder_path))
+        state_dict = torch.load(os.path.join(self.config.model_path, self.config.image_encoder))
         self.model.load_state_dict(state_dict['image_encoder'])
         self.image_head.load_state_dict(state_dict["image_head"])
         self.metric_fc.load_state_dict(state_dict["metric_fc"])
         self.fusion_net.load_state_dict(state_dict["net"])
 
-        checkpoint = torch.load(os.path.join(self.config.model_path, self.config.text_encoder_path))
+        checkpoint = torch.load(os.path.join(self.config.model_path, self.config.text_encoder))
         self.text_encoder.load_state_dict(checkpoint['model'])
         self.text_head.load_state_dict(checkpoint['head'])
 
@@ -221,9 +221,9 @@ class Trainer:
         return loss
     
 
-    def get_fusion_loss(self, gl_img, words_features, img_features, words_emb, sent_emb, targets):
+    def get_fusion_loss(self, gl_img, local_feats, global_feats, word_emb, sent_emb, targets):
         fusion_loss = losses.FocalLoss(gamma=2) 
-        output = self.fusion_net(words_features, words_emb)  #(words_features, img_features, sent_emb)
+        output = self.fusion_net(local_feats, word_emb, global_feats, sent_emb)
 
         gl_img = F.normalize(gl_img, p=2, dim=1)
         output = F.normalize(output, p=2, dim=1)
@@ -282,12 +282,12 @@ class Trainer:
         
         loop = tqdm(total = len(self.train_dl))
 
-        for inputs, targets, caption in self.train_dl:
+        for inputs, _, targets, caption in self.train_dl:
             inputs, targets = inputs.to(my_device), targets.to(my_device)
 
             gl_img, l_img = self.model(inputs)
-            img_features, words_features = self.image_head(gl_img, l_img)
-            words_emb, sent_emb = self.get_text_emb(caption)
+            global_feats, local_feats = self.image_head(gl_img, l_img)
+            word_emb, sent_emb = self.get_text_emb(caption)
             
             self.optimizer_model.zero_grad()
             self.optimizer_en.zero_grad()
@@ -295,10 +295,10 @@ class Trainer:
             self.optimizer_fusion.zero_grad()
             total_loss = 0
 
-            total_loss += self.get_cls_loss(sent_emb, img_features, targets)
-            if self.config.is_KD: total_loss += self.get_CPA(sent_emb, img_features)
-            total_loss += self.get_itc_loss(sent_emb, img_features)
-            total_loss += self.get_fusion_loss(gl_img, words_features, img_features, words_emb, sent_emb, targets) 
+            total_loss += self.get_cls_loss(sent_emb, global_feats, targets)
+            if self.config.is_KD: total_loss += self.get_CPA(sent_emb, global_feats)
+            total_loss += self.get_itc_loss(sent_emb, global_feats)
+            total_loss += self.get_fusion_loss(gl_img, local_feats, global_feats, word_emb, sent_emb, targets) 
 
             # update
             total_loss.backward()
@@ -336,20 +336,30 @@ class Trainer:
         
         loop = tqdm(total = len(self.test_dl))
         with torch.no_grad():
-            for inputs, targets, caption in self.test_dl:
-                inputs, targets = inputs.cuda(), targets.cuda()
+            for inputs, inputs_h, targets, caption in self.test_dl:
+                inputs, inputs_h, targets = inputs.to(my_device), inputs_h.to(my_device), targets.to(my_device)
+
+                word_emb, sent_emb = self.get_text_emb(caption)
+
                 gl_img, l_img = self.model(inputs)
+                global_feats, local_feats = self.image_head(gl_img, l_img)
+                output = self.fusion_net(local_feats, word_emb, global_feats, sent_emb) 
 
-                img_features, words_features = self.image_head(gl_img, l_img)
-                words_emb, sent_emb = self.get_text_emb(caption)
-                output = self.fusion_net(words_features, words_emb) 
-
-                #concatenation
                 gl_img = F.normalize(gl_img, p=2, dim=1)
                 output = F.normalize(output, p=2, dim=1)
                 output = torch.cat((gl_img, output), dim=1)
                 output = self.metric_fc(output)
 
+                gl_img_h, l_img_h = self.model(inputs_h)
+                global_feats_h, local_feats_h = self.image_head(gl_img_h, l_img_h)
+                output_h = self.fusion_net(local_feats_h, word_emb, global_feats_h, sent_emb) 
+
+                gl_img_h = F.normalize(gl_img_h, p=2, dim=1)
+                output_h = F.normalize(output_h, p=2, dim=1)
+                output_h = torch.cat((gl_img_h, output_h), dim=1)
+                output_h = self.metric_fc(output_h)
+
+                output = torch.add(output, output_h) / 2.0
                 _, predicted = torch.max(output.data, 1)
                 total += targets.size(0)
                 correct += predicted.eq(targets.data).cpu().sum().item()
@@ -405,8 +415,8 @@ def parse_arguments(argv):
     
     parser.add_argument('--model_path',    type=str,   default="./weights/fgic/", help='model directory')
     parser.add_argument('--weights_path',    type=str,   default="./weights/fgic/", help='model directory')
-    parser.add_argument('--text_encoder_path',    type=str,   default="text_res18_bert_CMF_17.pth", help='text encoder directory')
-    parser.add_argument('--image_encoder_path',   type=str,   default="image_res18_bert_CMF_17.pth", help='image encoder directory')
+    parser.add_argument('--text_encoder',    type=str,   default="text_res18_bert_CMF_17.pth", help='text encoder directory')
+    parser.add_argument('--image_encoder',   type=str,   default="image_res18_bert_CMF_17.pth", help='image encoder directory')
 
     parser.add_argument('--lambda_f',       type=float,   default=1,    help='weight value of the fusion loss')
     parser.add_argument('--lambda_itc',     type=float,   default=1,    help='weight value of the ITC loss')
@@ -462,3 +472,9 @@ if __name__ == '__main__':
 
     elif config.train == False:
         t.test()
+
+
+"""
+RUN THE CODE
+python3 fgic/train_fgic_captionface.py --test --resnet_layer 18 --saved_model_file resnet18_cub.pth --text_encoder text_res18_bert_CMF_17 --image_encoder image_res18_bert_CMF_17
+"""

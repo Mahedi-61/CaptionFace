@@ -3,7 +3,6 @@ from fc_train import Trainer
 from fc_test import Tester
 import pprint
 
-
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--train',          dest="train",       help='train the GPTFace model',   action='store_true')
@@ -18,7 +17,7 @@ def parse_arguments(argv):
     parser.set_defaults(gen_text=False)
     parser.set_defaults(sa=False)
 
-    parser.add_argument('--dataset',            type=str,   default="LFW",    help='Name of the datasets: celeba|LFW')
+    parser.add_argument('--dataset',            type=str,   default="celeba",    help='Name of the datasets: celeba|LFW |CALFW | AGEDB')
     parser.add_argument('--arch',               type=str,   default="arcface", help='Image encoder arcface|adaface')
     parser.add_argument('--batch_size',         type=int,   default=64,         help='Batch size')
     parser.add_argument('--epochs',             type=int,   default=8,          help='Number of epochs')
@@ -64,3 +63,8 @@ if __name__ == "__main__":
 
     elif config.train == False:
         Tester(config).test()
+
+"""
+RUN THE CODE
+python3 src/gptface_main.py --test --generate --dataset AGEDB --arch arcface
+"""

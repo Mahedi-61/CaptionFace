@@ -1,18 +1,16 @@
 import os, sys, random
 import os.path as osp
-import argparse
+import argparse, itertools
+import torch
 import numpy as np
+import pprint 
 
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 from tqdm import tqdm 
-import itertools
-from datetime import datetime 
 ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
 
-from utils.utils import mkdir_p,  merge_args_yaml
 from utils.prepare import prepare_adaface, prepare_arcface
 from cfg.config_space import face2text_cfg, celeba_cfg, celeba_dialog_cfg, setup_cfg, LFW_cfg
 from types import SimpleNamespace
@@ -20,45 +18,31 @@ from types import SimpleNamespace
 from utils.modules import test 
 from models import metrics, losses 
 from utils.dataset_utils import *
-from utils.modules import (calculate_scores, calculate_identification_acc)
+from utils.modules import calculate_scores
 
-today = datetime.now() 
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+my_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def parse_args():
-    cfg_file = "train_bert.yml"
-    print("loading %s" % cfg_file)
-    parser = argparse.ArgumentParser(description='Train Model')
-    parser.add_argument('--cfg', dest='cfg_file', type=str, 
-                        default='./cfg/%s' %cfg_file)
-    
-    file_args = parser.parse_args()
-    return file_args
 
-
-class ClsDataset(torch.utils.data.Dataset):
-    def __init__(self, filenames, split="train", args=None):
-
-        print("\n############## Loading %s dataset ################" % split)
+class ClsDataset:
+    def __init__(self, filenames, args=None):        
         self.data_dir = args.data_dir
-        self.dataset_name = args.dataset_name
+        self.dataset_name = args.dataset
         self.model_type = args.model_type
-        self.split = split 
+        self.split = "train" 
 
+        print("\n############## Loading %s dataset ################" % self.split)
         self.filenames = filenames
         split_dir = os.path.join(self.data_dir, self.split)
         self.class_id = load_class_id(split_dir)
 
-
     def __getitem__(self, index):
         key = self.filenames[index]
         cls_id = self.class_id[index]
-        
         img_extension = ".jpg" # works for all dataset 
         img_name = os.path.join(self.data_dir, "images", self.split, key + img_extension)
-        
         imgs = get_imgs(img_name, self.split, self.model_type)
 
         return imgs, cls_id 
@@ -67,22 +51,23 @@ class ClsDataset(torch.utils.data.Dataset):
         return len(self.filenames)
 
 
-class ValidDataset(torch.utils.data.Dataset):
+class ValidDataset:
     def __init__(self, split="test", args=None):
         
         print("\n############## Loading %s dataset ################" % split)
         self.split= split
         self.data_dir = args.data_dir
-        self.dataset_name = args.dataset_name
+        self.dataset_name = args.dataset
         self.model_type = args.model_type 
 
         #self.class_id = load_class_id(os.path.join(self.data_dir, self.split))
-        self.valid_pair_list = args.test_pair_list
+        if split == "test": self.pair_list = args.test_ver_list
+        elif split == "valid": self.pair_list = args.valid_ver_list
         self.imgs_pair, self.pair_label = self.get_test_list()
 
 
     def get_test_list(self):
-        with open(self.valid_pair_list, 'r') as fd:
+        with open(self.pair_list, 'r') as fd:
             pairs = fd.readlines()
         imgs_pair = []
         pair_label = []
@@ -116,43 +101,13 @@ class ValidDataset(torch.utils.data.Dataset):
         return len (self.imgs_pair)
 
 
-
-def get_data_loader(args, split):
-    if split == "train":
-        train_filenames = load_filenames(args.data_dir, 'train')
-        train_ds = ClsDataset(train_filenames, 
-                            split="train", 
-                            args=args)
-        
-        dl = torch.utils.data.DataLoader(
-            train_ds, 
-            batch_size=args.batch_size, 
-            drop_last=True,
-            num_workers=args.num_workers, 
-            shuffle=True)
-        
-    elif split == "valid":
-        valid_ds = ValidDataset("test", args)
-        
-        dl = torch.utils.data.DataLoader(
-            valid_ds, 
-            batch_size=args.batch_size, 
-            drop_last=False,
-            num_workers=args.num_workers, 
-            shuffle=False)
-    return dl
-
-
-
-class Train:
+class Trainer:
     def __init__(self, args):
         self.args = args 
-        self.device = args.device
+        self.args.device = my_device
         self.model_type = args.model_type
-
-        # prepare dataloader
-        #self.train_dl = get_data_loader(self.args, split="train")
-        self.valid_dl = get_data_loader(self.args, split="valid")
+        self.get_data_loader()
+  
         #self.total_steps = len(self.train_dl) * self.args.max_epoch
         
         print("Loading training and valid data ...")
@@ -160,25 +115,38 @@ class Train:
 
         # building image encoder
         self.build_image_encoders() 
-        
-
-        # set the optimizer
         self.get_optimizer() 
-
-        #resume checkpoint
-        self.start_epoch = 1
     
 
-    def save_models(self):
-        save_dir = os.path.join(self.args.checkpoints_path, 
-                                self.args.dataset_name,  
-                                self.args.en_type + "_" + self.args.model_type + "_" + self.args.architecture,
-                                self.args.fusion_type,
-                                today.strftime("%m-%d-%y-%H:%M"))
-        mkdir_p(save_dir)
-
-        name = '%s_%d.pth' % (args.model_type, self.args.current_epoch )
+    def get_data_loader(self):
+        train_filenames = load_filenames(self.args.data_dir, 'train')
+        train_ds = ClsDataset(train_filenames, 
+                            args = self.args)
         
+        self.train_dl = torch.utils.data.DataLoader(
+            train_ds, 
+            batch_size=self.args.batch_size, 
+            drop_last=True,
+            num_workers=self.args.num_workers, 
+            shuffle=True)
+        
+
+        valid_ds = ValidDataset("test", self.args)
+        
+        self.valid_dl = torch.utils.data.DataLoader(
+            valid_ds, 
+            batch_size=self.args.batch_size, 
+            drop_last=False,
+            num_workers=self.args.num_workers, 
+            shuffle=False)
+
+
+
+    def save_models(self):
+        save_dir = os.path.join(self.args.weights_path, "finetuned", self.args.dataset)        
+        os.makedirs(save_dir, exist_ok=True)
+
+        name = 'image_%s_%d.pth' % (self.args.model_type, self.args.current_epoch)
         state_path = os.path.join(save_dir, name)
         state = {"image_encoder": self.image_encoder.state_dict()}
         torch.save(state, state_path)
@@ -186,24 +154,21 @@ class Train:
 
     def build_image_encoders(self):
         if self.model_type == "arcface":
-            self.image_encoder = prepare_arcface(self.args, train_mode="fixed") #finetune
-            self.image_cls = metrics.ArcMarginProduct(self.args.fusion_final_dim, 
+            self.image_encoder = prepare_arcface(self.args, train_mode="finetune") 
+            self.image_cls = metrics.ArcMarginProduct(512, 
                                     self.args.num_classes, 
                                     s=30.0, 
                                     m=0.5, 
-                                    easy_margin=False)
+                                    easy_margin=False).to(my_device)
             
         elif self.model_type == "adaface":
-            self.image_encoder = prepare_adaface(self.args, train_mode="fixed")  #finetune
+            self.image_encoder = prepare_adaface(self.args, train_mode="finetune")  
     
-            self.image_cls = metrics.AdaFace(self.args.fusion_final_dim,
+            self.image_cls = metrics.AdaFace(512,
                                             self.args.num_classes,  
                                             m=0.9, 
                                             h=0.333,   
-                                            s=40.0)
- 
-        self.image_cls = torch.nn.DataParallel(self.image_cls, 
-                    device_ids=self.args.gpu_id).to(self.args.device)
+                                            s=40.0).to(my_device)
 
 
     def get_optimizer(self):
@@ -222,7 +187,6 @@ class Train:
 
 
     def test(self, valid_dl, model, args):
-        device = args.device
         model.eval()
         preds = []
         labels = []
@@ -233,9 +197,9 @@ class Train:
             img1, img2, pair_label = data 
             
             # upload to cuda
-            img1 = img1.to(device)
-            img2 = img2.to(device)
-            pair_label = pair_label.to(device)
+            img1 = img1.to(my_device)
+            img2 = img2.to(my_device)
+            pair_label = pair_label.to(my_device)
 
             # get global and local image features from COTS model
             if args.model_type == "arcface" or args.model_type == "magface":
@@ -257,7 +221,6 @@ class Train:
 
         loop.close()
 
-        #a = ["pred: " + str(i) + " true: " + str(j) for i, j in zip(preds, labels)]
         if not args.is_ident: 
             calculate_scores(preds, labels, args)
         else:
@@ -265,21 +228,20 @@ class Train:
             calculate_scores(preds, labels, args)
 
 
-    def train(self):
+    def train_epoch(self):
         self.image_encoder.train()
         self.image_cls.train()
 
         epoch = self.args.current_epoch 
         total_length = len(self.train_dl) * self.args.batch_size
         total_loss = 0
-        correct = 0
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         loop = tqdm(total = len(self.train_dl))
 
         for imgs, label in  self.train_dl:   
-            imgs = imgs.to(self.device)
-            label = label.to(self.device)
+            imgs = imgs.to(my_device)
+            label = label.to(my_device)
         
             if self.model_type == "adaface":
                 gl_img_features, words_features, norm = self.image_encoder(imgs)
@@ -289,43 +251,37 @@ class Train:
                 output = self.image_cls(gl_img_features, label)
     
             self.optimizer_cls.zero_grad()
-            if epoch > 8: self.optimizer_en.zero_grad() 
+            if epoch > self.args.freeze: self.optimizer_en.zero_grad() 
             loss =  self.criterion(output, label)
 
             total_loss += loss.item()
             loss.backward()
 
-            if epoch > 8: self.optimizer_en.step()
+            if epoch > self.args.freeze: self.optimizer_en.step()
             self.optimizer_cls.step()
-
-            out_ind = torch.argmax(output, axis=1)
-            correct += sum(out_ind == label)
 
             # update loop information
             loop.update(1)
-            loop.set_description(f'Training Epoch [{epoch}/{self.args.max_epoch}]')
+            loop.set_description(f'Training Epoch [{epoch}/{self.args.epochs}]')
             loop.set_postfix()
 
         loop.close()
         print(' | epoch {:3d} |' .format(self.args.current_epoch))
         print("Identity loss: {:5.4f} ".format(total_loss / total_length))
-        acc = correct / total_length
-        print("accuracy {:5.4f} ".format(acc*100))
+
    
 
-    def main(self):
+    def train(self):
         LR_change_seq = [6, 10]
         gamma = 0.75
         lr = 0.01
 
-        self.test(self.valid_dl, self.image_encoder, args)
-        """
-        for epoch in range(self.start_epoch, self.args.max_epoch + 1):
+        for epoch in range(0, self.args.epochs):
             self.args.current_epoch = epoch
 
-            self.train()
+            self.train_epoch()
             
-            if epoch % self.args.save_interval==0:
+            if epoch  > self.args.save_interval:
                 self.save_models()
 
             if epoch in LR_change_seq:
@@ -338,35 +294,107 @@ class Train:
 
                 print("Learning Rate change to: {:0.5f}".format(lr))
 
-            if (epoch > 8 and self.args.do_test == True):
+            if (epoch > self.args.valid_interval):
                 print("\nLet's validate the model")
                 self.test(self.valid_dl, self.image_encoder, args)
-        """
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train',          dest="train",       help='train the pretrained resent model',   action='store_true')
+    parser.add_argument('--test',           dest="train",       help='evaluate the pretrained resent model',action='store_false')
+    parser.set_defaults(train=False)
+
+    parser.add_argument('--dataset',            type=str,   default="celeba",    help='Name of the datasets celeba|face2text|celeba_dialog')
+    parser.add_argument('--batch_size',             type=int,   default=128,         help='Batch size')
+    parser.add_argument('--epochs',             type=int,   default=36,          help='Number of epochs')
+
+    parser.add_argument('--architecture',       type=str,   default="ir_18",     help='iResNet Architecture 18|50|101')
+    parser.add_argument('--model_type',         type=str,   default="arcface",   help='architecture of the model: arcface | adaface | magface')
+    parser.add_argument('--freeze',             type=int,   default=6,           help='Number of epoch pretrained model frezees')
+
+    parser.add_argument('--save_interval',      type=int,   default=7,           help='saving intervals (epochs)')
+    parser.add_argument('--valid_interval',     type=int,   default=7,           help='valid (epochs)')
+
+    parser.add_argument('--checkpoint_path',    type=str,   default="./checkpoints", help='model directory')
+    parser.add_argument('--weights_path',       type=str,   default="./weights/pretrained", help='model directory')
+
+    parser.add_argument('--test_file',          type=str,   default="test_ver.txt",          help='Name of the test list file')
+    parser.add_argument('--valid_file',         type=str,   default="valid_ver.txt",         help='Name of the test list file')
+
+    return  parser.parse_args(argv)
+
+
+# Face2Text dataset
+face2text_cfg = SimpleNamespace(
+    num_classes = 4500,
+    captions_per_image = 4,
+    test_sub = 1193 
+)
+
+# CelebA dataset
+celeba_cfg = SimpleNamespace(
+    num_classes= 4500, 
+    captions_per_image= 10,
+    test_sub = 1217
+)
+
+
+# CelebA-Dialog dataset
+celeba_dialog_cfg = SimpleNamespace(
+    num_classes= 8000, 
+    captions_per_image = 1,
+    test_sub = 1677
+)
+
+
+setup_cfg = SimpleNamespace(
+    weights_adaface_18 = "./weights/pretrained/adaface_ir18_webface4m.ckpt",
+    weights_arcface_18 = "./weights/pretrained/arcface_ir18_ms1mv3.pth", 
+
+    metric = "arc_margin", 
+    loss = "focal_loss", 
+    use_se = False,
+    manual_seed = 61,
+    num_workers = 4,
+
+    en_type = "BERT",        
+    embedding_dim = 256,
+    bert_type = "bert",
+
+    bert_config=  "bert-base-uncased",
+    align_config= "kakaobrain/align-base",
+    clip_config= "openai/clip-vit-base-patch32",
+    blip_config= "Salesforce/blip-image-captioning-base",
+    is_ident = False,
+)
 
 
 if __name__ == "__main__":
-    file_args = merge_args_yaml(parse_args())
-    args = SimpleNamespace(**file_args.__dict__, **setup_cfg.__dict__)
+    c_args = parse_arguments(sys.argv[1:])
 
-    if args.dataset_name == "face2text": 
-        args =  SimpleNamespace(**face2text_cfg.__dict__, **args.__dict__)
+    if c_args.dataset == "celeba":
+        args = SimpleNamespace(**c_args.__dict__, **setup_cfg.__dict__, **celeba_cfg.__dict__)
+
+    elif c_args.dataset == "face2text":
+        args = SimpleNamespace(**c_args.__dict__, **setup_cfg.__dict__, **face2text_cfg.__dict__)
     
-    elif args.dataset_name == "celeba":
-        args =  SimpleNamespace(**celeba_cfg.__dict__, **args.__dict__)
-    
-    elif args.dataset_name == "celeba_dialog":
-        args  = SimpleNamespace(**celeba_dialog_cfg.__dict__, **args.__dict__)
+    elif c_args.dataset == "celeba_dialog":
+        args = SimpleNamespace(**c_args.__dict__, **setup_cfg.__dict__, **celeba_dialog_cfg.__dict__)
 
-    elif args.dataset_name == "LFW":
-        args  = SimpleNamespace(**LFW_cfg.__dict__, **args.__dict__)
-    else:
-        print("Error: New Dataset !!, dataset doesn't have config file!!")
 
+    print("******** Dataset Name: %s ***** " % args.dataset)
     # set seed
     random.seed(args.manual_seed)
     np.random.seed(args.manual_seed)
     torch.manual_seed(args.manual_seed)
 
     torch.cuda.manual_seed_all(args.manual_seed)
-    args.batch_size = 64
-    Train(args).main()
+    args.data_dir = os.path.join("./data", args.dataset)
+    args.test_ver_list = os.path.join(args.data_dir, "images", args.test_file)
+    args.valid_ver_list = os.path.join(args.data_dir, "images", args.valid_file)
+    #pprint.pp(args)
+    
+    t = Trainer(args)
+    print("start training ...")
+    t.train()

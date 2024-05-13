@@ -17,7 +17,7 @@ from models.losses import sent_loss, words_loss, CMPLoss
 from utils.prepare import (prepare_train_val_loader, prepare_test_loader, 
                            prepare_adaface, prepare_arcface)
 
-from models.fusion_nets import LinearFusion, FCFM, CMF
+from models.fusion_nets import LinearFusion, FCFM, CMF, CMF_FR
 from utils.modules import test 
 from models.models import (TextEncoder, TextHeading, ImageHeading)
 from models import metrics, losses 
@@ -61,7 +61,7 @@ class Trainer:
         save_dir = os.path.join(self.args.checkpoint_path, self.args.dataset,  "CaptionFace")        
         os.makedirs(save_dir, exist_ok=True)
 
-        name = 'image_%s_%s_%s_%d1.pth' % (self.args.model_type, 
+        name = 'image_%s_%s_%s_%d.pth' % (self.args.model_type, 
                                           self.args.en_type, 
                                           self.args.fusion_type, 
                                           self.args.current_epoch)
@@ -79,7 +79,7 @@ class Trainer:
             'head': self.text_head.state_dict()
         }
 
-        torch.save(checkpoint_text_en, '%s/text_%s_%s_%s_%d1.pth' % 
+        torch.save(checkpoint_text_en, '%s/text_%s_%s_%s_%d.pth' % 
                     (save_dir, self.args.model_type,self.args.en_type, 
                                self.args.fusion_type, self.args.current_epoch))
 
@@ -142,13 +142,13 @@ class Trainer:
         if self.args.fusion_type == "linear":
             self.fusion_net = LinearFusion(self.args).to(my_device)
 
-        elif self.args.fusion_type == "CMF": 
-            self.fusion_net = CMF(args).to(my_device)
+        elif self.args.fusion_type == "CMF_FR": 
+            self.fusion_net = CMF_FR(args).to(my_device)
 
         elif self.args.fusion_type == "fcfm": 
             self.fusion_net = FCFM(args.gl_img_dim).to(my_device)
 
-        self.metric_fc = metrics.TopLayer(self.args.fusion_final_dim, 
+        self.metric_fc = metrics.TopLayer(512, #self.args.fusion_final_dim, 
                         self.args.num_classes).to(my_device)
         
 
@@ -170,7 +170,7 @@ class Trainer:
                                         self.image_text_cls.parameters(),
                                         self.image_text_attr.parameters()),
 
-                "lr": 0.002}
+                "lr": 0.001}
             ] 
 
         params_fusion = [
@@ -191,11 +191,11 @@ class Trainer:
 
         self.lrs_align = torch.optim.lr_scheduler.ExponentialLR(
                                         self.optimizer_align, 
-                                        gamma=0.97)
+                                        gamma=0.98)
         
         self.lrs_fusion = torch.optim.lr_scheduler.ExponentialLR(
                                         self.optimizer_fusion, 
-                                        gamma=0.97)
+                                        gamma=0.98)
 
 
     def get_identity_loss(self, sent_emb, img_features, class_ids):
@@ -298,10 +298,7 @@ class Trainer:
     def get_fusion_loss(self, local_feats, words_emb, global_feats, sent_emb, gl_img, class_ids):
         fusion_loss = losses.FocalLoss(gamma=2) #torch.nn.CrossEntropyLoss() 
 
-        output = self.fusion_net(local_feats, words_emb, global_feats, sent_emb)
-        gl_img = F.normalize(gl_img, p=2, dim=1)
-        output = F.normalize(output, p=2, dim=1)
-        output = torch.cat((gl_img, output), dim=1)
+        output = self.fusion_net(local_feats, words_emb, global_feats, sent_emb, gl_img)
         output = self.metric_fc(output)
   
         loss = (args.lambda_f * fusion_loss(output, class_ids.to(my_device)))
@@ -415,6 +412,7 @@ class Trainer:
                     self.text_encoder, self.text_head, 
                     self.args)
 
+
 face2text_cfg = SimpleNamespace(
     data_dir = "./data/face2text",  
     test_ver_acc_list= "./data/face2text/images/test_ver_acc.txt",
@@ -497,30 +495,30 @@ def parse_arguments(argv):
     parser.set_defaults(is_attr_loss=False)
 
     parser.add_argument('--dataset',       type=str,   default="celeba",                help='Name of the datasets celeba | face2text | celeba_dialog')
-    parser.add_argument('--batch_size',    type=int,   default=16,                       help='Batch size')
-    parser.add_argument('--max_epoch',     type=int,   default=22,                      help='Maximum epochs')
+    parser.add_argument('--batch_size',    type=int,   default=8,                       help='Batch size')
+    parser.add_argument('--max_epoch',     type=int,   default=18,                      help='Maximum epochs')
     parser.add_argument('--model_type',    type=str,   default="arcface",               help='architecture of the model: arcface | adaface')
     parser.add_argument('--test_file',     type=str,   default="test_ver.txt",          help='Name of the test list file')
     parser.add_argument('--valid_file',    type=str,   default="valid_ver.txt",         help='Name of the test list file')
 
     parser.add_argument('--fusion_final_dim',   type=int,   default=576,     help='Final fusion dimension')
     parser.add_argument('--freeze',             type=int,   default=4,      help='Number of epoch pretrained model frezees')
-    parser.add_argument('--fusion_type',        type=str,   default="CMF",  help='Type of Fusion block CMF|linear')
+    parser.add_argument('--fusion_type',        type=str,   default="CMF_FR",  help='Type of Fusion block CMF|linear')
     
     parser.add_argument('--checkpoint_path',    type=str,   default="./checkpoints", help='checkpoints directory')
     parser.add_argument('--weights_path',       type=str,   default="./weights/pretrained", help='pretrained model directory')
 
-    parser.add_argument('--lambda_f',       type=float,   default=2,    help='weight value of the fusion loss')
+    parser.add_argument('--lambda_f',       type=float,   default=3,    help='weight value of the fusion loss')
     parser.add_argument('--lambda_itc',     type=float,   default=1,    help='weight value of the ITC loss')
     parser.add_argument('--lambda_cmp',     type=float,   default=1,    help='weight value of the identity loss')
-    parser.add_argument('--lambda_kd',      type=float,   default=0.1,   help='weight value of the KD loss')
+    parser.add_argument('--lambda_kd',      type=float,   default=1,   help='weight value of the KD loss')
     parser.add_argument('--lambda_attr',    type=float,   default=12,   help='weight value of the attribute loss')
     parser.add_argument('--lambda_clip',    type=float,   default=1,   help='weight value of the KD loss')
     parser.add_argument('--lambda_id',      type=float,   default=1,   help='weight value of the attribute loss')
 
-    parser.add_argument('--save_interval',     type=int,   default=6,    help='saving intervals (epochs)')
-    parser.add_argument('--test_interval',     type=int,   default=6,    help='tester intervals (epochs)')
-    parser.add_argument('--min_lr_bert',       type=float,  default=0.00002,    help='minimum learning rate for bert optimization')
+    parser.add_argument('--save_interval',     type=int,   default=13,    help='saving intervals (epochs)')
+    parser.add_argument('--test_interval',     type=int,   default=17,    help='tester intervals (epochs)')
+    parser.add_argument('--min_lr_bert',       type=float,  default=0.00003,    help='minimum learning rate for bert optimization')
     return  parser.parse_args(argv)
 
 

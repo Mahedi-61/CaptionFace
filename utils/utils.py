@@ -113,7 +113,7 @@ def get_dataframes(dataset, exp_type):
         elif exp_type == "valid": return val_df 
         elif exp_type == "test": return test_df 
 
-    elif dataset == "LFW":
+    elif dataset == "LFW" or dataset == "CALFW" or dataset == "AGEDB":
         test_dir = os.path.join(base_path, "images")
         images = sorted(os.listdir(test_dir), key= lambda x: int(x.split(".")[0]))
         test_df = pd.DataFrame({"image": images})

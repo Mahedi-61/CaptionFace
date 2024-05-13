@@ -44,6 +44,16 @@ def get_transform(train):
     elif train == False: return transform_test 
 
 
+def get_filp():
+    transform_h = transforms.Compose([
+        transforms.RandomHorizontalFlip(p=1),
+        transforms.Resize((224,224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.485, 0.456, 0.406),
+                            std=(0.229, 0.224, 0.225))
+    ])
+    return transform_h
+
 
 class CUBDataset(Dataset):
     def __init__(self, train, args):
@@ -56,13 +66,15 @@ class CUBDataset(Dataset):
 
         self.imgs, self.labels, self.captions = get_images_labels(filename) 
         self.transform = get_transform(self.train)
+        self.transform_h = get_filp()
         self.args = args
 
     def __getitem__(self, index):
         img = self.imgs[index]
         label = self.labels[index]
-        img = Image.open(img).convert('RGB')
-        img = self.transform(img)
+        img_PIL = Image.open(img).convert('RGB')
+        img = self.transform(img_PIL)
+        img_h = self.transform_h(img_PIL)
         
         # random select a sentence
         if self.train == True:
@@ -73,7 +85,7 @@ class CUBDataset(Dataset):
         with open(self.captions[index], "r") as f:
             texts = f.read().splitlines()
 
-        return img, torch.tensor(label), texts[sent_ix]
+        return img, img_h, torch.tensor(label), texts[sent_ix]
 
     def __len__(self):
         return len(self.imgs)

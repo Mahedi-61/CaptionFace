@@ -113,8 +113,6 @@ def calculate_scores(y_score, y_true, args):
             np.save(f, y_score)
     """
 
-
-
 def calculate_acc(preds, labels, args):
     predicts = []
     num_imgs = len(preds)
@@ -191,12 +189,21 @@ def test(test_dl, model, image_head, image_text_attr,
                 gl_img1,  local_feat1 = model(img1)
                 gl_img2,  local_feat2 = model(img2)
 
+                gl_img1_h,  local_feat1_h = model(img1)
+                gl_img2_h,  local_feat2_h = model(img2)
+
             elif args.model_type == "adaface":
-                global_feat1,  local_feat1, norm = model(img1)
-                global_feat2,  local_feat2, norm = model(img2)
+                gl_img1,  local_feat1, norm = model(img1)
+                gl_img2,  local_feat2, norm = model(img2)
+
+                gl_img1_h,  local_feat1_h, norm = model(img1)
+                gl_img2_h,  local_feat2_h, norm = model(img2)
 
             global_feat1,  local_feat1 = image_head(gl_img1,  local_feat1)
             global_feat2,  local_feat2 = image_head(gl_img2,  local_feat2)
+
+            global_feat1_h,  local_feat1_h = image_head(gl_img1_h,  local_feat1_h)
+            global_feat2_h,  local_feat2_h = image_head(gl_img2_h,  local_feat2_h)
 
             # get word and caption features from text encoder
             words_emb1, sent_emb1 = encode_Bert_tokens(text_encoder, text_head, caption1, mask1, args)
@@ -217,17 +224,15 @@ def test(test_dl, model, image_head, image_text_attr,
                 #attribute_analysis(img2[0], img_attr2[0], attr_vec2[0], text_attr2[0])
 
             # sentence & word featurs 
-            out1 = fusion_net(local_feat1, words_emb1,  global_feat1, sent_emb1)
-            out2 = fusion_net(local_feat2, words_emb2,  global_feat2, sent_emb2)
+            out1 = fusion_net(local_feat1, words_emb1,  global_feat1, sent_emb1, gl_img1)
+            out2 = fusion_net(local_feat2, words_emb2,  global_feat2, sent_emb2, gl_img2)
+
+            out1_h = fusion_net(local_feat1_h, words_emb1,  global_feat1_h, sent_emb1, gl_img1_h)
+            out2_h = fusion_net(local_feat2_h, words_emb2,  global_feat2_h, sent_emb2, gl_img2_h)
             del local_feat1, local_feat2, words_emb1, words_emb2
 
-            #gl_img1 = F.normalize(gl_img1, p=2, dim=1)
-            #out1 = F.normalize(out1,  p=2, dim=1)
-            out1 = torch.cat((gl_img1, out1), dim=1)
-
-            #gl_img2 = F.normalize(gl_img2, p=2, dim=1)
-            #out2 = F.normalize(out2, p=2, dim=1)
-            out2 = torch.cat((gl_img2, out2), dim=1)
+            out1 = torch.add(out1, out1_h) / 2.0
+            out2 = torch.add(out2, out2_h) / 2.0
 
             cosine_sim = nn.CosineSimilarity(dim=1, eps=1e-6)
             pred = cosine_sim(out1, out2)

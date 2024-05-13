@@ -129,6 +129,7 @@ class Tester:
             meter = AverageMeter()
 
         loop = tqdm(self.test_dl, total=len(self.test_dl))
+        
         for image, ref_caption, gen_file in loop:
             
             image = image.to(self.device)
@@ -160,7 +161,7 @@ class Tester:
                 full_text = "This" + gen_caption[0]
                 with open(gen_file[0], "w") as file:
                     file.write(full_text)
-
+        
         if self.config.gen_text == False: 
             meter.average()
             print("BLEU@1: ", meter.belu_1)

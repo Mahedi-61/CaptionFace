@@ -132,7 +132,7 @@ class Trainer:
         sd = self.model.state_dict()
         torch.save(sd, os.path.join(self.config.model_path, self.config.saved_model_file))
 
-
+    """
     def save_arcface_model(self,):
         arcface = iresnet.iresnet18(pretrained=False, progress=True)
         sd = self.model.state_dict()
@@ -145,7 +145,7 @@ class Trainer:
         os.makedirs(self.config.model_path, exist_ok=True)
         torch.save(arcface.state_dict(), 
                    os.path.join(self.config.model_path, 'arcface_celeba.pt'))
-
+    """
 
     def load_best_model(self,):
         saved_file = "model_%s_%s_%s_w_attr_full.pth" % (self.config.dataset, 

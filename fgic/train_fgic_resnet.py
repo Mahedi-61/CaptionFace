@@ -106,7 +106,7 @@ class Trainer:
         correct = 0
         total = 0
         
-        for inputs, targets, _ in self.train_dl:
+        for inputs, _, targets, _ in self.train_dl:
             inputs, targets = inputs.to(self.my_device), targets.to(self.my_device)
 
             gl_img, l_img = self.model(inputs)
@@ -151,18 +151,13 @@ class Trainer:
         self.cls_model.eval()
         correct = 0
         total = 0
-        total_ce_loss = 0
-
         self.load_model()
         
         with torch.no_grad():
-            for inputs, targets, _ in self.test_dl:
+            for inputs, _, targets, _ in self.test_dl:
                 inputs, targets = inputs.to(self.my_device), targets.to(self.my_device)
                 gl_feat, l_feat = self.model(inputs)
                 out = self.cls_model(gl_feat)
-
-                ce_loss = self.criterion(out, targets)
-                total_ce_loss += ce_loss.item()
 
                 _, predicted = torch.max(out.data, 1)
                 total += targets.size(0)
@@ -217,5 +212,9 @@ if __name__ == '__main__':
         t.train()
 
     elif config.train == False:
-        pass 
         t.test()
+
+"""
+RUN THE CODE
+python3 fgic/train_fgic_resnet.py --test --dataset cub --resnet_layer 18 --saved_model_file resnet18_cub.pth
+"""

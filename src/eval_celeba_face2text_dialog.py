@@ -62,10 +62,10 @@ class Evaluate:
                     global_feat1_h,  _, norm = self.model(img1_h)
                     global_feat2_h,  _, norm = self.model(img2_h)
 
-                gf1 = torch.cat((global_feat1, global_feat1_h), dim=1)
-                gf2 = torch.cat((global_feat2, global_feat2_h), dim=1)
+                #gf1 = torch.cat((global_feat1, global_feat1_h), dim=1)
+                #gf2 = torch.cat((global_feat2, global_feat2_h), dim=1)
 
-                pred = cosine_sim(gf1, gf2)
+                pred = cosine_sim(global_feat1, global_feat2)
                 preds += pred.data.cpu().tolist()
                 labels += pair_label.data.cpu().tolist()
 
@@ -133,7 +133,7 @@ setup_cfg = SimpleNamespace(
     align_config= "kakaobrain/align-base",
     clip_config= "openai/clip-vit-base-patch32",
     blip_config= "Salesforce/blip-image-captioning-base",
-    falva_config= "facebook/flava-full",
+
     is_ident = False,
     architecture = "ir_18"
 )

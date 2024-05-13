@@ -4,7 +4,7 @@ from utils.test_dataset import TestDataset
 
 from utils.utils import load_model_weights
 from models.models import TextHeading, TextEncoder, ImageHeading
-from models.fusion_nets import (LinearFusion, FCFM, CMF)
+from models.fusion_nets import (LinearFusion, FCFM, CMF, CMF_FR)
 from models import iresnet, net 
 from models import metrics
 from utils.dataset_utils import *
@@ -64,20 +64,23 @@ def prepare_arcface(args, train_mode):
     checkpoint = torch.load(weights_path)
     model.load_state_dict(checkpoint)
 
-    model.to(device)
-    print("loading pretrained arcface model: ", args.architecture)
-
     if train_mode == "my_own":
         state_dict = torch.load(args.backend_path)
         model.load_state_dict(state_dict['image_encoder'])
-        print("my own arcface weight is loaded")
-
-    if train_mode == "fixed" or train_mode == "my_own":
         for p in model.parameters():
             p.requires_grad = False
-        model.eval()
-        print("******* ArcFace weights are fixed **********")
 
+    elif train_mode == "fixed":
+        for p in model.parameters():
+            p.requires_grad = False 
+
+    elif train_mode == "finetune":
+        pass 
+
+    model.to(device)
+    model.eval()
+    print("******* ArcFace weights are fixed **********")
+    print("loading pretrained adaface model:  ", args.architecture)
     return model 
 
 
@@ -100,20 +103,24 @@ def prepare_adaface(args, train_mode):
     model_statedict = {key[6:]:val for key, val in statedict.items() if key.startswith('model.')}
     model.load_state_dict(model_statedict)
     
-    model.to(device)
-    print("loading pretrained adaface model:  ", args.architecture)
 
     if train_mode == "my_own":
         state_dict = torch.load(args.backend_path)
         model.load_state_dict(state_dict['image_encoder'])
-        print("my own adaface weight is loaded")
-
-    if train_mode == "fixed" or train_mode == "my_own":
         for p in model.parameters():
             p.requires_grad = False
-        model.eval()
-        print("******* AdaFace weights are fixed **********")
 
+    elif train_mode == "fixed":
+        for p in model.parameters():
+            p.requires_grad = False 
+
+    elif train_mode == "finetune":
+        pass 
+    
+    model.to(device)
+    model.eval()
+    print("******* AdaFace weights are fixed **********")
+    print("loading pretrained adaface model:  ", args.architecture)
     return model 
 
 
@@ -170,9 +177,13 @@ def prepare_fusion_net(args):
     elif args.fusion_type == "CMF":
         fusion_net = CMF(args).to(args.device)
 
-    checkpoint = torch.load(args.image_encoder_path, map_location=torch.device('cpu'))
-    fusion_net = load_model_weights(fusion_net, checkpoint["net"])
+    elif args.fusion_type == "CMF_FR":
+        fusion_net = CMF_FR(args).to(args.device)
+
+    checkpoint = torch.load(args.image_encoder_path)
+    fusion_net.load_state_dict(checkpoint["net"])
     return fusion_net 
+
 
 
 
@@ -218,10 +229,10 @@ def prepare_test_loader(args):
     valid_filenames, valid_captions, valid_att_masks, valid_attr_label,\
     test_filenames, test_captions, test_att_masks, test_att_label =  load_text_data_Bert(args.data_dir, args)
     
-    test_ds =  TestDataset(test_filenames, 
-                            test_captions, 
-                            test_att_masks,
-                            split="test", 
+    test_ds =  TestDataset(valid_filenames, 
+                            valid_captions, 
+                            valid_att_masks,
+                            split="valid", 
                             args=args)
 
     test_dl = torch.utils.data.DataLoader(
@@ -232,4 +243,3 @@ def prepare_test_loader(args):
         shuffle=False)
 
     return test_dl
-

@@ -33,11 +33,9 @@ class Test:
         elif self.args.model_type == "adaface":
             self.image_encoder = prepare_adaface(self.args, train_mode="fixed")
 
-
         self.image_text_attr = prepare_image_text_attr(self.args)
         self.image_head = prepare_image_head(self.args)
         self.fusion_net = prepare_fusion_net(self.args) 
-
 
     def eval(self):
         #pprint.pprint(self.args)
@@ -114,19 +112,19 @@ def parse_arguments(argv):
     parser.set_defaults(printing_attr=False)
 
     parser.add_argument('--dataset',       type=str,   default="celeba",                help='Name of the datasets celeba | face2text | celeba_dialog')
-    parser.add_argument('--batch_size',    type=int,   default=64,                      help='Batch size')
+    parser.add_argument('--batch_size',    type=int,   default=128,                      help='Batch size')
     parser.add_argument('--model_type',    type=str,   default="arcface",               help='architecture of the model: arcface | adaface | magface')
     parser.add_argument('--test_file',     type=str,   default="test_ver.txt",          help='Name of the test list file')
     parser.add_argument('--valid_file',    type=str,   default="valid_ver.txt",         help='Name of the test list file')
 
     parser.add_argument('--fusion_final_dim',   type=int,   default=576,     help='Final fusion dimension')
     parser.add_argument('--freeze',             type=int,   default=5,      help='Number of epoch pretrained model frezees')
-    parser.add_argument('--fusion_type',        type=str,   default="CMF",  help='Type of Fusion block CMF|linear')
+    parser.add_argument('--fusion_type',        type=str,   default="CMF_FR",  help='Type of Fusion block CMF|linear')
     
     parser.add_argument('--checkpoint_path',    type=str,   default="./checkpoints", help='model directory')
     parser.add_argument('--weights_path',       type=str,   default="./weights/pretrained", help='model directory')
-    parser.add_argument('--text_encoder',  type=str,   default="text_arcface_BERT_CMF_7.pth", help='text encoder file')
-    parser.add_argument('--image_encoder', type=str,   default="image_arcface_BERT_CMF_7.pth", help='image encoder file')
+    parser.add_argument('--text_encoder',  type=str,   default="text_arcface_BERT_CMF_20.pth", help='text encoder file')
+    parser.add_argument('--image_encoder', type=str,   default="image_arcface_BERT_CMF_20.pth", help='image encoder file')
 
     return  parser.parse_args(argv)
 
@@ -164,5 +162,5 @@ if __name__ == "__main__":
 
 """
 RUN THE CODE
-python3 src/test_tgfr.py  --model_type adaface --dataset celeba
+python3 src/test_captionface.py  --model_type adaface --dataset celeba
 """
