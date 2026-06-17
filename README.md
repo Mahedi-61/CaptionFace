@@ -253,17 +253,6 @@ Grad-CAM++ visualizations (Figs. 8–9) and the cosine-similarity distribution p
 
 GPTFace reaches this with 177M trainable parameters at less than one-third the input resolution of BLIP/BLIP-2 (446M and 1.1B parameters, respectively).
 
-### Fine-grained image classification on CUB-200-2011 (Rank-1 accuracy %)
-
-| Backbone | Method | Uses captions | Accuracy |
-|---|---|---|---|
-| ResNet18 | ResNet18 baseline | ✗ | 72.77 |
-| ResNet18 | TGFR | ✓ | 76.0 |
-| ResNet18 | **CaptionFace (ours)** | ✓ | **78.0** |
-| ResNet50 | ResNet50 baseline | ✗ | 78.96 |
-| ResNet50 | TGFR | ✓ | 82.80 |
-| ResNet50 | **CaptionFace (ours)** | ✓ | **84.84** |
-
 Full ablations over the objective function (Table VI), atmospheric-turbulence robustness (Table VII), image-encoder fine-tuning (Table VIII), GPTFace component-wise ablation (Table IX), and the hyperparameter search space (Table X) are in the paper.
 
 ## Citation
@@ -286,7 +275,7 @@ If you use this code or build on this work, please cite:
 This paper extends our two earlier works on text-guided face recognition:
 
 ```bibtex
-@InProceedings{Hasan_2024_WACV,
+@InProceedings{Hasan_TGFR_2024,
     author    = {Hasan, Md Mahedi and Sami, Shoaib Meraj and Nasrabadi, Nasser},
     title     = {Text-Guided Face Recognition Using Multi-Granularity Cross-Modal Contrastive Learning},
     booktitle = {Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)},
@@ -295,7 +284,7 @@ This paper extends our two earlier works on text-guided face recognition:
     pages     = {5784-5793}
 }
 
-@InProceedings{Hasan_2023_IJCB,
+@InProceedings{Hasan_CGFR_2023,
     author={Hasan, Md Mahedi and Nasrabadi, Nasser},
     booktitle={2023 IEEE International Joint Conference on Biometrics (IJCB)},
     title={Improving Face Recognition from Caption Supervision with Multi-Granular Contextual Feature Aggregation},
@@ -311,7 +300,6 @@ This work was supported by the Center for Identification Technology Research (CI
 ## Related Works
 
 - [TGFR (WACV 2024)](https://github.com/Mahedi-61/Text_Guided_Face_Recognition) — our earlier two-stage text-guided FR framework that this work extends to an end-to-end design.
-- [XCT-SAM](https://github.com/Mahedi-61/XCT-SAM) — Conv-LoRA domain adaptation of SAM for industrial XCT defect segmentation.
 
 ## Contact
 
