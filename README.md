@@ -3,7 +3,6 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)]()
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.10%2B-orange)]()
 [![Journal](https://img.shields.io/badge/IEEE%20TBIOM-2025-blue)]()
-[![Backbone](https://img.shields.io/badge/Backbone-AdaFace-green)]()
 [![Status](https://img.shields.io/badge/Status-Code%20Released-brightgreen)]()
 
 ### **IEEE Transactions on Biometrics, Behavior, and Identity Science (TBIOM), Vol. 7, No. 2, pp. 195–209, April 2025**
