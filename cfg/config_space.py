@@ -96,7 +96,7 @@ setup_cfg = SimpleNamespace(
 
     # machine setup
     num_workers= 4, 
-    gpu_id= [1], #1
-    device = torch.device("cuda:1"),
+    gpu_id= [0], #1
+    device = torch.device("cuda:0"),
     manual_seed= 100
 )
